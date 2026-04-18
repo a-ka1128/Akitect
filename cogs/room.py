@@ -108,13 +108,18 @@ class RoomCog(commands.Cog):
                     # 메시지 전송
                     msg = ch_info.get("msg", "")
                     if msg:
+                        # 첫 번째 채널에서만 멤버 태그
+                        member_mention = f"{target.mention}" if i == 0 else ""
+
+                        message_content = f"{member_mention}".strip() if member_mention else None
+
                         embed = discord.Embed(
                             title=ch_name,
                             description=msg,
                             color=EMBED_SUCCESS_COLOR
                         )
                         embed.set_thumbnail(url=target.display_avatar.url)
-                        await new_channel.send(embed=embed)
+                        await new_channel.send(content=message_content, embed=embed)
 
                     # 권한 설정
                     role_id = ch_info.get("role_id")

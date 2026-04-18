@@ -171,12 +171,17 @@ class ChannelCog(commands.Cog):
                     # 메시지 전송
                     msg = channel_info.get("msg", "")
                     if msg:
+                        # 첫 번째 채널에서만 멤버 태그
+                        member_mention = f"{member.mention}" if target_index == 0 else ""
+
+                        message_content = f"{member_mention}".strip() if member_mention else None
+
                         embed = discord.Embed(
                             title=channel_name,
                             description=msg,
                             color=EMBED_SUCCESS_COLOR
                         )
-                        await new_channel.send(embed=embed)
+                        await new_channel.send(content=message_content, embed=embed)
 
                     # 권한 설정
                     role_id = channel_info.get("role_id")
