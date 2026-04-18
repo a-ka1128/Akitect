@@ -297,5 +297,6 @@ class ChannelCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Cog 로드"""
-    settings = SettingsManager()
-    await bot.add_cog(ChannelCog(bot, settings))
+    # main.py에서 만든 전역 SettingsManager 인스턴스 사용
+    import main
+    await bot.add_cog(ChannelCog(bot, main.settings_manager))

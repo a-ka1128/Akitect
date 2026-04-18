@@ -23,6 +23,9 @@ intents.message_content = True  # 메시지 내용 접근
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# ✅ 전역 SettingsManager 인스턴스 (모든 곳에서 공유)
+settings_manager = SettingsManager()
+
 # =========================================================
 # 이벤트
 # =========================================================
@@ -53,11 +56,11 @@ async def on_member_join(member: discord.Member):
     logger.info(f"👤 멤버 입장: {member.name} ({member.id})")
 
     try:
-        settings = SettingsManager()
+        global settings_manager
         guild_id = str(member.guild.id)
 
         # 자동 역할 부여
-        auto_role_id = settings.get_auto_role(guild_id)
+        auto_role_id = settings_manager.get_auto_role(guild_id)
         if auto_role_id:
             role = member.guild.get_role(auto_role_id)
             if role:
@@ -95,11 +98,11 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
         (성공 여부, 메시지)
     """
     try:
-        settings = SettingsManager()
+        global settings_manager
         guild_id = str(guild.id)
 
         # 템플릿 확인
-        channels = settings.get_channels(guild_id)
+        channels = settings_manager.get_channels(guild_id)
         if not channels:
             logger.warning(f"⚠️ 템플릿이 없습니다: {guild.name}")
             return False, "설정된 채널 템플릿이 없습니다."
@@ -148,6 +151,7 @@ async def load_cogs():
 
     각 Cog 파일은 setup() 함수를 포함해야 합니다.
     """
+    global settings_manager
     cogs_dir = Path(__file__).parent / "cogs"
 
     if not cogs_dir.exists():
@@ -161,6 +165,7 @@ async def load_cogs():
 
         cog_name = cog_file.stem
         try:
+            # bot.load_extension 호출 전에 settings_manager를 전역으로 설정
             await bot.load_extension(f"cogs.{cog_name}")
             logger.info(f"✅ Cog 로드: {cog_name}")
         except Exception as e:
