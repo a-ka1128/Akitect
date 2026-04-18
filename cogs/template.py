@@ -251,10 +251,19 @@ class TemplateCog(commands.Cog):
                 msg_preview += "..."
 
             role_str = ""
-            if "role_id" in info:
-                role = interaction.guild.get_role(info["role_id"])
-                if role:
-                    role_str = f" [🔒 {role.name}]"
+            # 여러 역할 지원
+            role_ids = info.get("role_ids", [])
+            if not role_ids and "role_id" in info:
+                role_ids = [info["role_id"]]
+
+            if role_ids:
+                roles = []
+                for role_id in role_ids:
+                    role = interaction.guild.get_role(role_id)
+                    if role:
+                        roles.append(role.name)
+                if roles:
+                    role_str = f" [🔒 {', '.join(roles)}]"
 
             desc += f"**{i}. {name}**{role_str}\n"
             desc += f"   ```{msg_preview}```\n"
@@ -335,6 +344,88 @@ class TemplateCog(commands.Cog):
         )
         await interaction.followup.send(embed=embed)
         logger.info(f"템플릿 순서 변경: {guild_id} - {channel_name} → {corrected_order}")
+
+    @app_commands.command(name="역할추가", description="템플릿 채널에 역할을 추가합니다")
+    @app_commands.describe(
+        channel_name="대상 채널 이름",
+        role="추가할 역할"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete)
+    @admin_only()
+    async def add_role_to_channel(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        role: discord.Role
+    ):
+        """
+        템플릿 채널에 열람 가능한 역할 추가
+
+        Args:
+            interaction: Discord Interaction
+            channel_name: 대상 채널 이름
+            role: 추가할 역할
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+
+        if self.settings.add_role_to_channel(guild_id, channel_name, role.id):
+            embed = discord.Embed(
+                title="✅ 역할 추가 완료",
+                description=f"📝 채널: `{channel_name}`\n🔒 역할: {role.mention}",
+                color=EMBED_SUCCESS_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            logger.info(f"역할 추가: {guild_id} - {channel_name} - {role.id}")
+        else:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}` 채널을 찾을 수 없거나 이미 추가된 역할입니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="역할제거", description="템플릿 채널에서 역할을 제거합니다")
+    @app_commands.describe(
+        channel_name="대상 채널 이름",
+        role="제거할 역할"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete)
+    @admin_only()
+    async def remove_role_from_channel(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        role: discord.Role
+    ):
+        """
+        템플릿 채널에서 열람 가능한 역할 제거
+
+        Args:
+            interaction: Discord Interaction
+            channel_name: 대상 채널 이름
+            role: 제거할 역할
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+
+        if self.settings.remove_role_from_channel(guild_id, channel_name, role.id):
+            embed = discord.Embed(
+                title="✅ 역할 제거 완료",
+                description=f"📝 채널: `{channel_name}`\n🔒 역할: {role.mention}",
+                color=EMBED_SUCCESS_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            logger.info(f"역할 제거: {guild_id} - {channel_name} - {role.id}")
+        else:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}` 채널을 찾을 수 없거나 해당 역할이 설정되지 않았습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):

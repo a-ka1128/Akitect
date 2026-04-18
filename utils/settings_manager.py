@@ -115,7 +115,7 @@ class SettingsManager:
         Args:
             guild_id: 길드 ID
             ch_name: 채널 이름
-            info: 채널 정보 (msg, role_id 등)
+            info: 채널 정보 (msg, role_ids 등)
 
         Returns:
             성공 여부
@@ -131,6 +131,78 @@ class SettingsManager:
             return True
         except Exception as e:
             logger.error(f"❌ 채널 템플릿 저장 오류: {e}")
+            return False
+
+    def add_role_to_channel(self, guild_id: str, ch_name: str, role_id: int) -> bool:
+        """
+        채널 템플릿에 역할 추가
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            role_id: 추가할 역할 ID
+
+        Returns:
+            성공 여부
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                logger.warning(f"⚠️ 채널을 찾을 수 없습니다: {ch_name}")
+                return False
+
+            # role_ids 리스트 초기화 (기존 role_id 호환성)
+            if "role_ids" not in channels[ch_name]:
+                channels[ch_name]["role_ids"] = []
+                # 기존 role_id가 있으면 role_ids로 이전
+                if "role_id" in channels[ch_name]:
+                    channels[ch_name]["role_ids"].append(channels[ch_name]["role_id"])
+                    del channels[ch_name]["role_id"]
+
+            if role_id not in channels[ch_name]["role_ids"]:
+                channels[ch_name]["role_ids"].append(role_id)
+                self.save()
+                logger.info(f"✅ 역할 추가: {ch_name} - {role_id}")
+                return True
+
+            logger.warning(f"⚠️ 이미 추가된 역할입니다: {role_id}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 역할 추가 오류: {e}")
+            return False
+
+    def remove_role_from_channel(self, guild_id: str, ch_name: str, role_id: int) -> bool:
+        """
+        채널 템플릿에서 역할 제거
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            role_id: 제거할 역할 ID
+
+        Returns:
+            성공 여부
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                logger.warning(f"⚠️ 채널을 찾을 수 없습니다: {ch_name}")
+                return False
+
+            if "role_ids" not in channels[ch_name]:
+                logger.warning(f"⚠️ 역할이 설정되지 않았습니다: {ch_name}")
+                return False
+
+            if role_id in channels[ch_name]["role_ids"]:
+                channels[ch_name]["role_ids"].remove(role_id)
+                self.save()
+                logger.info(f"✅ 역할 제거: {ch_name} - {role_id}")
+                return True
+
+            logger.warning(f"⚠️ 해당 역할을 찾을 수 없습니다: {role_id}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 역할 제거 오류: {e}")
             return False
 
     def rename_channel(self, guild_id: str, old_name: str, new_name: str) -> bool:

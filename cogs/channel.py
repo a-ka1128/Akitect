@@ -183,9 +183,13 @@ class ChannelCog(commands.Cog):
                         )
                         await new_channel.send(content=message_content, embed=embed)
 
-                    # 권한 설정
-                    role_id = channel_info.get("role_id")
-                    if role_id:
+                    # 권한 설정 (여러 역할 지원)
+                    # 기존 role_id 호환성 유지
+                    role_ids = channel_info.get("role_ids", [])
+                    if not role_ids and "role_id" in channel_info:
+                        role_ids = [channel_info["role_id"]]
+
+                    for role_id in role_ids:
                         role = interaction.guild.get_role(role_id)
                         if role:
                             await manager.set_channel_permissions(
