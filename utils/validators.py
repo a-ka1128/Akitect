@@ -33,9 +33,8 @@ class Validators:
             return False, "채널 이름은 100자 이하여야 합니다."
 
         # 알파벳, 숫자, -, _ 만 허용
-        allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-        if not all(c in allowed_chars for c in name):
-            return False, "채널 이름에는 알파벳, 숫자, -, _ 만 사용 가능합니다."
+        if not name or ' ' in name:
+            return False, "채널 이름에는 공백을 사용할 수 없습니다."
 
         return True, ""
 
