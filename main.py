@@ -132,58 +132,71 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
         if not new_category:
             return False, "카테고리 생성에 실패했습니다."
 
+        logger.info(f"✅ 카테고리 생성: {new_category.name}")
+
         # 템플릿에 따라 채널 생성
         try:
             channel_manager = ChannelManager(guild)
             template_keys = list(channels.keys())
 
             for i, (ch_name, ch_info) in enumerate(channels.items()):
-                new_channel = await channel_manager.create_in_category(
-                    new_category,
-                    ch_name,
-                    position=i
-                )
+                try:
+                    new_channel = await channel_manager.create_in_category(
+                        new_category,
+                        ch_name,
+                        position=i
+                    )
 
-                if new_channel:
-                    # 메시지 전송
-                    msg = ch_info.get("msg", "")
-                    if msg:
-                        # 첫 번째 채널에서만 멤버 태그
-                        member_mention = f"{member.mention}" if i == 0 else ""
-                        message_content = f"{member_mention}".strip() if member_mention else None
+                    if new_channel:
+                        logger.info(f"✅ 채널 생성: {ch_name}")
 
-                        embed = discord.Embed(
-                            title=ch_name,
-                            description=msg,
-                            color=0x2ecc71
-                        )
-                        embed.set_thumbnail(url=member.display_avatar.url)
-                        await new_channel.send(content=message_content, embed=embed)
+                        # 메시지 전송
+                        msg = ch_info.get("msg", "")
+                        if msg:
+                            # 첫 번째 채널에서만 멤버 태그
+                            member_mention = f"{member.mention}" if i == 0 else ""
+                            message_content = f"{member_mention}".strip() if member_mention else None
 
-                    # 권한 설정 (여러 역할 지원)
-                    role_ids = ch_info.get("role_ids", [])
-                    if not role_ids and "role_id" in ch_info:
-                        role_ids = [ch_info["role_id"]]
-
-                    for role_id in role_ids:
-                        role = guild.get_role(role_id)
-                        if role:
-                            await channel_manager.set_channel_permissions(
-                                new_channel,
-                                role,
-                                read_messages=True,
-                                send_messages=True
+                            embed = discord.Embed(
+                                title=ch_name,
+                                description=msg,
+                                color=0x2ecc71
                             )
+                            embed.set_thumbnail(url=member.display_avatar.url)
+                            await new_channel.send(content=message_content, embed=embed)
 
-                    await asyncio.sleep(config.CHANNEL_OPERATION_DELAY)
+                        # 권한 설정 (여러 역할 지원)
+                        role_ids = ch_info.get("role_ids", [])
+                        if not role_ids and "role_id" in ch_info:
+                            role_ids = [ch_info["role_id"]]
+
+                        for role_id in role_ids:
+                            role = guild.get_role(role_id)
+                            if role:
+                                await channel_manager.set_channel_permissions(
+                                    new_channel,
+                                    role,
+                                    read_messages=True,
+                                    send_messages=True
+                                )
+
+                        await asyncio.sleep(config.CHANNEL_OPERATION_DELAY)
+                    else:
+                        logger.warning(f"⚠️ 채널 생성 실패: {ch_name}")
+
+                except Exception as e:
+                    logger.error(f"❌ 채널 '{ch_name}' 생성 중 오류: {e}", exc_info=True)
+                    continue
 
             # 채널 순서 정렬
             await channel_manager.reorder_channels_in_category(new_category, template_keys)
+            logger.info(f"✅ 채널 순서 정렬 완료")
 
         except Exception as e:
-            logger.error(f"❌ 채널 생성 오류: {e}", exc_info=True)
+            logger.error(f"❌ 채널 생성 중 오류: {e}", exc_info=True)
+            return False, f"채널 생성 중 오류: {str(e)}"
 
-        logger.info(f"✅ 카테고리 생성: {new_category.name}")
+        logger.info(f"✅ 방 생성 완료: {new_category.name}")
         return True, f"새로운 카테고리 '{new_category.name}'가 생성되었습니다."
 
     except Exception as e:
