@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # 봇 초기화
 # =========================================================
 intents = discord.Intents.default()
-intents.members = True          # 멤버 관련 이벤트
-intents.message_content = True  # 메시지 내용 접근
+intents.members = True
+intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -229,7 +229,6 @@ async def load_cogs():
 
         cog_name = cog_file.stem
         try:
-            # bot.load_extension 호출 전에 settings_manager를 전역으로 설정
             await bot.load_extension(f"cogs.{cog_name}")
             logger.info(f"✅ Cog 로드: {cog_name}")
         except Exception as e:
