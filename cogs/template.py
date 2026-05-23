@@ -229,7 +229,15 @@ class TemplateCog(commands.Cog):
         Args:
             interaction: Discord Interaction
         """
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.errors.InteractionResponded:
+            # Interaction이 이미 응답된 경우 무시
+            logger.debug("Interaction이 이미 응답되었습니다.")
+            return
+        except Exception as e:
+            logger.error(f"❌ Interaction 응답 오류: {e}")
+            return
 
         guild_id = str(interaction.guild_id)
         channels = self.settings.get_channels(guild_id)

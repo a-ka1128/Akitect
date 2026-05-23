@@ -41,7 +41,14 @@ class UtilityCog(commands.Cog):
             interaction: Discord Interaction
             role: 할당할 역할
         """
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.errors.InteractionResponded:
+            logger.debug("Interaction이 이미 응답되었습니다.")
+            return
+        except Exception as e:
+            logger.error(f"❌ Interaction 응답 오류: {e}")
+            return
 
         guild_id = str(interaction.guild_id)
         self.settings.set_auto_role(guild_id, role.id)

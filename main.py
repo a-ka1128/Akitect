@@ -54,6 +54,10 @@ async def on_member_join(member: discord.Member):
 
     자동 역할 부여 및 방 생성
     """
+    # 봇은 무시
+    if member.bot:
+        return
+
     logger.info(f"👤 멤버 입장: {member.name} ({member.id})")
 
     try:
