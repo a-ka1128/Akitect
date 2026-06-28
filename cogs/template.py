@@ -519,6 +519,22 @@ class TemplateCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
+        # 서버 업로드 한도 확인: 봇은 서버 부스트 등급 한도까지만 파일을 재전송할 수 있다.
+        # (관리자가 Nitro로 한도보다 큰 파일을 올리면 나중에 방 생성 시 413이 나므로 미리 막는다)
+        limit = interaction.guild.filesize_limit
+        if file.size > limit:
+            embed = discord.Embed(
+                title="❌ 파일이 너무 큽니다",
+                description=(
+                    f"이 서버의 업로드 한도는 **{limit / (1024 * 1024):.0f}MB**입니다.\n"
+                    f"`{file.filename}` 은(는) **{file.size / (1024 * 1024):.1f}MB** 라 등록할 수 없습니다.\n\n"
+                    f"더 작은 파일로 올리거나, 서버 부스트로 한도를 올려주세요."
+                ),
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
         # 파일 저장: 디스크에는 UUID 이름으로 저장해 한글/이모지 파일명 충돌을 방지하고,
         # 원본 파일명은 settings.json에 기록해 전송 시 그대로 사용한다.
         try:

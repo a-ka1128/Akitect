@@ -170,7 +170,7 @@ class ChannelCog(commands.Cog):
                 if new_channel:
                     # 메시지/파일 전송 (배포는 방 주인이 제각각이라 멘션 없이 안내만 전송)
                     msg = channel_info.get("msg", "")
-                    files = ChannelManager.build_files(channel_info)
+                    files = ChannelManager.build_files(channel_info, interaction.guild.filesize_limit)
                     if msg or files:
                         embed = None
                         if msg:
@@ -265,7 +265,7 @@ class ChannelCog(commands.Cog):
                 continue
 
             # discord.File은 1회용이라 방마다 새로 생성한다.
-            files = ChannelManager.build_files(channel_info)
+            files = ChannelManager.build_files(channel_info, interaction.guild.filesize_limit)
             if not files:
                 continue
 

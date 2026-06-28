@@ -107,7 +107,7 @@ class RoomCog(commands.Cog):
                 if new_channel:
                     # 메시지/파일 전송
                     msg = ch_info.get("msg", "")
-                    files = ChannelManager.build_files(ch_info)
+                    files = ChannelManager.build_files(ch_info, interaction.guild.filesize_limit)
                     if msg or files:
                         # 첫 번째 채널에서만 멤버 태그
                         member_mention = f"{target.mention}" if i == 0 else ""

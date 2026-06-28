@@ -150,7 +150,7 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
 
                         # 메시지/파일 전송
                         msg = ch_info.get("msg", "")
-                        files = ChannelManager.build_files(ch_info)
+                        files = ChannelManager.build_files(ch_info, guild.filesize_limit)
                         if msg or files:
                             # 첫 번째 채널에서만 멤버 태그
                             member_mention = f"{member.mention}" if i == 0 else ""

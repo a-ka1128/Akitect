@@ -30,7 +30,7 @@ class ChannelManager:
         logger.info(f"ChannelManager 초기화: {guild.name}")
 
     @staticmethod
-    def build_files(ch_info: Dict[str, Any]) -> list[discord.File]:
+    def build_files(ch_info: Dict[str, Any], max_size: Optional[int] = None) -> list[discord.File]:
         """
         템플릿 정보(ch_info)에 저장된 첨부 파일들을 discord.File 리스트로 만든다.
 
@@ -38,6 +38,7 @@ class ChannelManager:
 
         Args:
             ch_info: 채널 템플릿 딕셔너리 (files 키 포함 가능)
+            max_size: 서버 업로드 한도(bytes). 초과하는 파일은 제외한다 (None이면 제한 없음)
 
         Returns:
             discord.File 리스트 (없으면 빈 리스트)
@@ -49,10 +50,19 @@ class ChannelManager:
                 path = Path(rel_path)
                 if not path.is_absolute():
                     path = BASE_DIR / path
-                if path.exists():
-                    files.append(discord.File(path, filename=f.get("name", path.name)))
-                else:
+                if not path.exists():
                     logger.warning(f"⚠️ 첨부 파일을 찾을 수 없습니다: {rel_path}")
+                    continue
+                # 서버 업로드 한도를 넘는 파일은 건너뛴다.
+                # (관리자가 Nitro로 큰 파일을 올려도 봇은 서버 한도까지만 전송 가능 → 413 방지)
+                size = path.stat().st_size
+                if max_size is not None and size > max_size:
+                    logger.warning(
+                        f"⚠️ 첨부 파일이 서버 업로드 한도 초과로 건너뜀: "
+                        f"{f.get('name')} ({size} bytes > {max_size} bytes)"
+                    )
+                    continue
+                files.append(discord.File(path, filename=f.get("name", path.name)))
             except Exception as e:
                 logger.error(f"❌ 첨부 파일 로드 오류: {e}")
         return files
