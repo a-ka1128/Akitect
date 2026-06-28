@@ -61,6 +61,30 @@ class Validators:
         return True, ""
 
     @staticmethod
+    def validate_url(url: str) -> Tuple[bool, str]:
+        """
+        링크 버튼용 URL 검증
+
+        규칙: http:// 또는 https:// 로 시작, 512자 이하 (Discord 버튼 URL 제한)
+
+        Args:
+            url: 검증할 URL
+
+        Returns:
+            (성공 여부, 에러 메시지)
+        """
+        if not url or not url.strip():
+            return False, "URL은 비울 수 없습니다."
+
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return False, "URL은 http:// 또는 https:// 로 시작해야 합니다."
+
+        if len(url) > 512:
+            return False, "URL은 512자 이하여야 합니다."
+
+        return True, ""
+
+    @staticmethod
     def validate_order(order: int, max_order: int) -> Tuple[bool, str, int]:
         """
         순서 번호 검증

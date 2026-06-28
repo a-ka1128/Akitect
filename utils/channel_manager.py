@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 import discord
+from discord.utils import MISSING
 from config import CHANNEL_OPERATION_DELAY, RENAME_OPERATION_DELAY, BASE_DIR
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,34 @@ class ChannelManager:
                 logger.error(f"❌ 첨부 파일 로드 오류: {e}")
         return files
 
+    @staticmethod
+    def build_view(ch_info: Dict[str, Any]) -> Optional[discord.ui.View]:
+        """
+        템플릿의 buttons 정보로 링크(URL) 버튼 View를 만든다.
+
+        링크 버튼은 클릭 시 콜백이 없어 영구 등록(persistent) 처리가 필요 없다.
+
+        Args:
+            ch_info: 채널 템플릿 딕셔너리 (buttons 키 포함 가능)
+
+        Returns:
+            discord.ui.View 또는 버튼이 없으면 None
+        """
+        buttons = ch_info.get("buttons", [])
+        if not buttons:
+            return None
+
+        view = discord.ui.View(timeout=None)
+        for b in buttons[:25]:  # Discord 컴포넌트 최대 25개
+            url = b.get("url")
+            if url:
+                view.add_item(discord.ui.Button(
+                    label=b.get("label", "열기"),
+                    url=url,
+                    style=discord.ButtonStyle.link
+                ))
+        return view if view.children else None
+
     async def send_template_content(
         self,
         channel: discord.TextChannel,
@@ -78,7 +107,7 @@ class ChannelManager:
         color: Optional[discord.Color] = None,
     ) -> None:
         """
-        템플릿의 안내문(임베드)과 첨부 파일을 채널에 전송한다.
+        템플릿의 안내문(임베드)·링크 버튼·첨부 파일을 채널에 전송한다.
 
         안내문을 먼저 보내고 파일은 '별도 메시지'로 보낸다.
         → 파일이 서버 업로드 한도를 넘어 413이 나도 안내문은 항상 게시된다.
@@ -95,21 +124,22 @@ class ChannelManager:
             color = discord.Color.green()
 
         msg = ch_info.get("msg", "")
+        view = self.build_view(ch_info)  # 링크 버튼 (없으면 None)
 
-        # 1) 안내문 먼저 (파일과 무관하게 항상 시도)
+        # 1) 안내문 + 버튼 먼저 (파일과 무관하게 항상 시도)
         if msg:
             embed = discord.Embed(title=title, description=msg, color=color)
             if thumbnail_url:
                 embed.set_thumbnail(url=thumbnail_url)
             try:
-                await channel.send(content=content, embed=embed)
+                await channel.send(content=content, embed=embed, view=view or MISSING)
             except discord.HTTPException as e:
                 logger.error(f"❌ 안내문 전송 실패 ({channel.name}): {e}")
-        elif content:
+        elif content or view:
             try:
-                await channel.send(content=content)
+                await channel.send(content=content, view=view or MISSING)
             except discord.HTTPException as e:
-                logger.error(f"❌ 멘션 전송 실패 ({channel.name}): {e}")
+                logger.error(f"❌ 안내문 전송 실패 ({channel.name}): {e}")
 
         # 2) 파일은 별도 메시지로 전송 (실패해도 위 안내문에는 영향 없음)
         files = self.build_files(ch_info, channel.guild.filesize_limit)

@@ -292,6 +292,74 @@ class SettingsManager:
             logger.error(f"❌ 첨부 파일 제거 오류: {e}")
             return None
 
+    # ================================================================
+    # 링크 버튼 관련 메서드
+    # ================================================================
+
+    def add_button_to_channel(self, guild_id: str, ch_name: str, label: str, url: str) -> bool:
+        """
+        채널 템플릿에 링크 버튼 추가 (같은 라벨이 있으면 URL만 갱신)
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            label: 버튼 표시 글자
+            url: 링크 URL
+
+        Returns:
+            성공 여부
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                logger.warning(f"⚠️ 채널을 찾을 수 없습니다: {ch_name}")
+                return False
+
+            buttons = channels[ch_name].setdefault("buttons", [])
+            for b in buttons:
+                if b.get("label") == label:
+                    b["url"] = url
+                    self.save()
+                    logger.info(f"✅ 버튼 갱신: {ch_name} - {label}")
+                    return True
+
+            buttons.append({"label": label, "url": url})
+            self.save()
+            logger.info(f"✅ 버튼 추가: {ch_name} - {label}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ 버튼 추가 오류: {e}")
+            return False
+
+    def remove_button_from_channel(self, guild_id: str, ch_name: str, label: str) -> bool:
+        """
+        채널 템플릿에서 링크 버튼 제거
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            label: 제거할 버튼 라벨
+
+        Returns:
+            성공 여부
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                return False
+
+            buttons = channels[ch_name].get("buttons", [])
+            for i, b in enumerate(buttons):
+                if b.get("label") == label:
+                    buttons.pop(i)
+                    self.save()
+                    logger.info(f"🗑️ 버튼 제거: {ch_name} - {label}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ 버튼 제거 오류: {e}")
+            return False
+
     def rename_channel(self, guild_id: str, old_name: str, new_name: str) -> bool:
         """
         채널 템플릿 이름 변경

@@ -6,6 +6,7 @@
 import logging
 import asyncio
 import discord
+from discord.utils import MISSING
 from discord.ext import commands
 from discord import app_commands
 
@@ -326,6 +327,8 @@ class ChannelCog(commands.Cog):
 
         await interaction.followup.send("✏️ 수정 중...")
 
+        # 링크 버튼 (없으면 None → 기존 버튼 제거됨)
+        view = ChannelManager.build_view(channel_info)
         success_count = 0
         create_count = 0
 
@@ -351,10 +354,10 @@ class ChannelCog(commands.Cog):
                             break
 
                     if target_msg:
-                        await target_msg.edit(embed=new_embed)
+                        await target_msg.edit(embed=new_embed, view=view)
                         success_count += 1
                     else:
-                        await channel.send(embed=new_embed)
+                        await channel.send(embed=new_embed, view=view or MISSING)
                         create_count += 1
 
                     await asyncio.sleep(CHANNEL_OPERATION_DELAY)

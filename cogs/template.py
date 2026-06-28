@@ -289,9 +289,15 @@ class TemplateCog(commands.Cog):
             if files:
                 file_str = "   📎 " + ", ".join(f["name"] for f in files) + "\n"
 
+            button_str = ""
+            buttons = info.get("buttons", [])
+            if buttons:
+                button_str = "   🔘 " + ", ".join(b["label"] for b in buttons) + "\n"
+
             desc += f"**{i}. {name}**{role_str}\n"
             desc += f"   ```{msg_preview}```\n"
             desc += file_str
+            desc += button_str
 
         embed = discord.Embed(
             title="📋 채널 템플릿 목록",
@@ -605,6 +611,132 @@ class TemplateCog(commands.Cog):
             embed = discord.Embed(
                 title="❌ 오류",
                 description=f"`{channel_name}`에서 `{file_name}` 파일을 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+        await interaction.followup.send(embed=embed)
+
+    # ================================================================
+    # 링크 버튼 관련 명령어
+    # ================================================================
+
+    async def button_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """선택한 채널 템플릿의 버튼 라벨 자동완성"""
+        guild_id = str(interaction.guild_id)
+        channel_name = getattr(interaction.namespace, "channel_name", None)
+        if not channel_name:
+            return []
+        info = self.settings.get_channel(guild_id, channel_name) or {}
+        buttons = info.get("buttons", [])
+        return [
+            app_commands.Choice(name=b["label"], value=b["label"])
+            for b in buttons
+            if current.lower() in b["label"].lower()
+        ][:25]
+
+    @app_commands.command(
+        name="템플릿버튼추가",
+        description="채널 템플릿에 링크 버튼을 추가합니다 (PDF·자료 링크 등)"
+    )
+    @app_commands.describe(
+        channel_name="대상 채널 템플릿 이름",
+        label="버튼에 표시할 글자 (예: 📄 가격표 보기)",
+        url="링크 주소 (http:// 또는 https://)"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete)
+    @admin_only()
+    async def add_template_button(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        label: str,
+        url: str
+    ):
+        """템플릿 채널에 링크 버튼 추가"""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+        info = self.settings.get_channel(guild_id, channel_name)
+
+        if not info:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}` 템플릿을 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        if len(label) > 80:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description="버튼 글자는 80자 이하여야 합니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        valid, error = Validators.validate_url(url)
+        if not valid:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=error,
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        if self.settings.add_button_to_channel(guild_id, channel_name, label, url):
+            embed = discord.Embed(
+                title="✅ 버튼 추가 완료",
+                description=f"📝 채널: `{channel_name}`\n🔘 버튼: **{label}**\n🔗 {url}",
+                color=EMBED_SUCCESS_COLOR
+            )
+            embed.set_footer(text="이후 생성되는 방의 해당 채널 안내문에 버튼이 표시됩니다.")
+            await interaction.followup.send(embed=embed)
+            logger.info(f"템플릿 버튼 추가: {guild_id} - {channel_name} - {label}")
+        else:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description="버튼을 추가할 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="템플릿버튼삭제",
+        description="채널 템플릿의 링크 버튼을 삭제합니다"
+    )
+    @app_commands.describe(
+        channel_name="대상 채널 템플릿 이름",
+        label="삭제할 버튼 글자"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete, label=button_autocomplete)
+    @admin_only()
+    async def delete_template_button(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        label: str
+    ):
+        """템플릿 채널의 링크 버튼 삭제"""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+
+        if self.settings.remove_button_from_channel(guild_id, channel_name, label):
+            embed = discord.Embed(
+                title="🗑️ 버튼 삭제 완료",
+                description=f"📝 채널: `{channel_name}`\n🔘 버튼: **{label}**",
+                color=EMBED_SUCCESS_COLOR
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}`에서 `{label}` 버튼을 찾을 수 없습니다.",
                 color=EMBED_ERROR_COLOR
             )
         await interaction.followup.send(embed=embed)
