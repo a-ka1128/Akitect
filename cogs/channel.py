@@ -168,18 +168,13 @@ class ChannelCog(commands.Cog):
                 )
 
                 if new_channel:
-                    # 메시지/파일 전송 (배포는 방 주인이 제각각이라 멘션 없이 안내만 전송)
-                    msg = channel_info.get("msg", "")
-                    files = ChannelManager.build_files(channel_info, interaction.guild.filesize_limit)
-                    if msg or files:
-                        embed = None
-                        if msg:
-                            embed = discord.Embed(
-                                title=channel_name,
-                                description=msg,
-                                color=EMBED_SUCCESS_COLOR
-                            )
-                        await new_channel.send(embed=embed, files=files)
+                    # 안내문과 파일 전송 (분리 전송으로 파일이 커도 안내문은 게시됨)
+                    await manager.send_template_content(
+                        new_channel,
+                        channel_info,
+                        title=channel_name,
+                        color=EMBED_SUCCESS_COLOR,
+                    )
 
                     # 권한 설정 (여러 역할 지원)
                     # 기존 role_id 호환성 유지

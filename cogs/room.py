@@ -105,24 +105,16 @@ class RoomCog(commands.Cog):
                 )
 
                 if new_channel:
-                    # 메시지/파일 전송
-                    msg = ch_info.get("msg", "")
-                    files = ChannelManager.build_files(ch_info, interaction.guild.filesize_limit)
-                    if msg or files:
-                        # 첫 번째 채널에서만 멤버 태그
-                        member_mention = f"{target.mention}" if i == 0 else ""
-
-                        message_content = f"{member_mention}".strip() if member_mention else None
-
-                        embed = None
-                        if msg:
-                            embed = discord.Embed(
-                                title=ch_name,
-                                description=msg,
-                                color=EMBED_SUCCESS_COLOR
-                            )
-                            embed.set_thumbnail(url=target.display_avatar.url)
-                        await new_channel.send(content=message_content, embed=embed, files=files)
+                    # 안내문과 파일 전송 (파일이 커도 안내문은 항상 게시되도록 분리 전송)
+                    member_mention = f"{target.mention}" if i == 0 else ""  # 첫 채널만 멤버 태그
+                    await channel_manager.send_template_content(
+                        new_channel,
+                        ch_info,
+                        title=ch_name,
+                        content=member_mention or None,
+                        thumbnail_url=target.display_avatar.url,
+                        color=EMBED_SUCCESS_COLOR,
+                    )
 
                     # 권한 설정 (여러 역할 지원)
                     # 기존 role_id 호환성 유지

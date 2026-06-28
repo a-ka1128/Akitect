@@ -67,6 +67,61 @@ class ChannelManager:
                 logger.error(f"❌ 첨부 파일 로드 오류: {e}")
         return files
 
+    async def send_template_content(
+        self,
+        channel: discord.TextChannel,
+        ch_info: Dict[str, Any],
+        *,
+        title: str,
+        content: Optional[str] = None,
+        thumbnail_url: Optional[str] = None,
+        color: Optional[discord.Color] = None,
+    ) -> None:
+        """
+        템플릿의 안내문(임베드)과 첨부 파일을 채널에 전송한다.
+
+        안내문을 먼저 보내고 파일은 '별도 메시지'로 보낸다.
+        → 파일이 서버 업로드 한도를 넘어 413이 나도 안내문은 항상 게시된다.
+
+        Args:
+            channel: 대상 채널
+            ch_info: 채널 템플릿 딕셔너리 (msg, files 등)
+            title: 임베드 제목
+            content: 본문 텍스트(멘션 등). 없으면 생략
+            thumbnail_url: 임베드 썸네일 URL
+            color: 임베드 색상 (기본 초록)
+        """
+        if color is None:
+            color = discord.Color.green()
+
+        msg = ch_info.get("msg", "")
+
+        # 1) 안내문 먼저 (파일과 무관하게 항상 시도)
+        if msg:
+            embed = discord.Embed(title=title, description=msg, color=color)
+            if thumbnail_url:
+                embed.set_thumbnail(url=thumbnail_url)
+            try:
+                await channel.send(content=content, embed=embed)
+            except discord.HTTPException as e:
+                logger.error(f"❌ 안내문 전송 실패 ({channel.name}): {e}")
+        elif content:
+            try:
+                await channel.send(content=content)
+            except discord.HTTPException as e:
+                logger.error(f"❌ 멘션 전송 실패 ({channel.name}): {e}")
+
+        # 2) 파일은 별도 메시지로 전송 (실패해도 위 안내문에는 영향 없음)
+        files = self.build_files(ch_info, channel.guild.filesize_limit)
+        if files:
+            try:
+                await channel.send(files=files)
+            except discord.HTTPException as e:
+                logger.error(
+                    f"❌ 첨부 파일 전송 실패 ({channel.name}): {e} "
+                    f"— 파일이 서버 업로드 한도를 초과했을 수 있습니다."
+                )
+
     async def rename_bulk(self, old_name: str, new_name: str) -> int:
         """
         서버 전체에서 특정 이름의 채널을 찾아 모두 이름 변경
