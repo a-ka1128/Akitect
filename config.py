@@ -28,12 +28,15 @@ ALLOWED_USER_IDS = list(map(
 # =========================================================
 BASE_DIR = Path(__file__).parent
 SETTINGS_FILE = BASE_DIR / "settings.json"
+TEMPLATE_FILES_DIR = BASE_DIR / "template_files"  # 템플릿 첨부 파일 저장 디렉토리
 
 # =========================================================
 # Rate Limiting (속도 제한)
 # =========================================================
-CHANNEL_OPERATION_DELAY = 1.0  # 채널 작업 대기 시간 (초) - Discord API 레이트 리미팅 회피
-RENAME_OPERATION_DELAY = 1.0   # 이름 변경 작업 대기 시간 (초)
+# discord.py가 레이트리밋(429)을 자동으로 처리하므로 과도한 대기는 불필요하다.
+# 약간의 버퍼만 두어 연속 작업 속도를 높인다.
+CHANNEL_OPERATION_DELAY = 0.5  # 채널 작업 간 대기 시간 (초)
+RENAME_OPERATION_DELAY = 0.5   # 이름 변경 작업 간 대기 시간 (초)
 MESSAGE_HISTORY_LIMIT = 10     # 메시지 히스토리 조회 수
 
 # =========================================================

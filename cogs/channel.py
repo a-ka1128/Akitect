@@ -168,20 +168,18 @@ class ChannelCog(commands.Cog):
                 )
 
                 if new_channel:
-                    # 메시지 전송
+                    # 메시지/파일 전송 (배포는 방 주인이 제각각이라 멘션 없이 안내만 전송)
                     msg = channel_info.get("msg", "")
-                    if msg:
-                        # 첫 번째 채널에서만 멤버 태그
-                        member_mention = f"{member.mention}" if target_index == 0 else ""
-
-                        message_content = f"{member_mention}".strip() if member_mention else None
-
-                        embed = discord.Embed(
-                            title=channel_name,
-                            description=msg,
-                            color=EMBED_SUCCESS_COLOR
-                        )
-                        await new_channel.send(content=message_content, embed=embed)
+                    files = ChannelManager.build_files(channel_info)
+                    if msg or files:
+                        embed = None
+                        if msg:
+                            embed = discord.Embed(
+                                title=channel_name,
+                                description=msg,
+                                color=EMBED_SUCCESS_COLOR
+                            )
+                        await new_channel.send(embed=embed, files=files)
 
                     # 권한 설정 (여러 역할 지원)
                     # 기존 role_id 호환성 유지
@@ -208,6 +206,81 @@ class ChannelCog(commands.Cog):
         embed = discord.Embed(
             title="✅ 배포 완료!",
             description=f"총 **{success_count}**개의 카테고리에 작업되었습니다.",
+            color=EMBED_SUCCESS_COLOR
+        )
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="파일배포",
+        description="템플릿 채널의 첨부 파일을 기존 모든 방에 전송합니다"
+    )
+    @app_commands.describe(channel_name="파일을 배포할 채널 템플릿 이름")
+    @app_commands.autocomplete(channel_name=channel_autocomplete)
+    @admin_only()
+    async def distribute_files(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str
+    ):
+        """
+        템플릿 채널의 첨부 파일을 기존 모든 방의 동일 채널에 전송
+
+        Args:
+            interaction: Discord Interaction
+            channel_name: 파일을 배포할 채널 이름
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild.id)
+        channel_info = self.settings.get_channel(guild_id, channel_name)
+
+        if not channel_info:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}` 템플릿을 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        if not channel_info.get("files"):
+            embed = discord.Embed(
+                title="⚠️ 첨부 파일 없음",
+                description=f"`{channel_name}` 템플릿에 첨부된 파일이 없습니다.\n"
+                            f"먼저 `/템플릿파일추가`로 파일을 등록하세요.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        await interaction.followup.send(
+            f"🚀 **`{channel_name}`** 채널에 첨부 파일 배포 시작..."
+        )
+
+        success_count = 0
+
+        for category in interaction.guild.categories:
+            channel = discord.utils.get(category.text_channels, name=channel_name)
+            if not channel:
+                continue
+
+            # discord.File은 1회용이라 방마다 새로 생성한다.
+            files = ChannelManager.build_files(channel_info)
+            if not files:
+                continue
+
+            try:
+                await channel.send(files=files)
+                success_count += 1
+                await asyncio.sleep(CHANNEL_OPERATION_DELAY)
+            except discord.Forbidden:
+                logger.error(f"권한 부족: {channel.name}")
+            except Exception as e:
+                logger.error(f"파일 배포 오류 ({category.name}): {e}")
+
+        embed = discord.Embed(
+            title="✅ 파일 배포 완료!",
+            description=f"총 **{success_count}**개 방의 `{channel_name}` 채널에 파일을 전송했습니다.",
             color=EMBED_SUCCESS_COLOR
         )
         await interaction.followup.send(embed=embed)
@@ -264,7 +337,7 @@ class ChannelCog(commands.Cog):
         # 모든 카테고리를 순회
         for category in interaction.guild.categories:
             for channel in category.text_channels:
-                if channel_name not in channel.name:
+                if channel.name != channel_name:
                     continue
 
                 try:
@@ -306,6 +379,5 @@ class ChannelCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Cog 로드"""
-    # main.py에서 만든 전역 SettingsManager 인스턴스 사용
-    import main
-    await bot.add_cog(ChannelCog(bot, main.settings_manager))
+    # main.setup_hook에서 bot에 등록한 공유 SettingsManager 사용
+    await bot.add_cog(ChannelCog(bot, bot.settings_manager))

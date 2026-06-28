@@ -3,6 +3,7 @@
 """
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -57,13 +58,17 @@ class SettingsManager:
             저장 성공 여부
         """
         try:
-            self.path.write_text(
+            # 임시 파일에 먼저 쓰고 원자적으로 교체한다.
+            # (저장 도중 프로세스가 죽어도 기존 settings.json이 깨지지 않음)
+            tmp_path = self.path.with_name(self.path.name + ".tmp")
+            tmp_path.write_text(
                 json.dumps(self.data, indent=4, ensure_ascii=False),
                 encoding="utf-8"
             )
+            os.replace(tmp_path, self.path)  # Windows/POSIX 모두 원자적 교체
             logger.info("💾 설정 파일 저장 완료")
             return True
-        except IOError as e:
+        except OSError as e:
             logger.error(f"❌ 설정 파일 저장 실패: {e}")
             return False
 
@@ -131,6 +136,26 @@ class SettingsManager:
             return True
         except Exception as e:
             logger.error(f"❌ 채널 템플릿 저장 오류: {e}")
+            return False
+
+    def set_channels(self, guild_id: str, channels: Dict[str, Dict]) -> bool:
+        """
+        길드의 채널 템플릿 전체를 교체 (순서 변경 등에 사용)
+
+        Args:
+            guild_id: 길드 ID
+            channels: 새 채널 템플릿 딕셔너리 (순서 유지)
+
+        Returns:
+            성공 여부
+        """
+        try:
+            self._ensure_guild(guild_id)
+            self.data[guild_id]["channels"] = channels
+            self.save()
+            return True
+        except Exception as e:
+            logger.error(f"❌ 채널 순서 저장 오류: {e}")
             return False
 
     def add_role_to_channel(self, guild_id: str, ch_name: str, role_id: int) -> bool:
@@ -204,6 +229,68 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"❌ 역할 제거 오류: {e}")
             return False
+
+    # ================================================================
+    # 첨부 파일 관련 메서드
+    # ================================================================
+
+    def add_file_to_channel(self, guild_id: str, ch_name: str, file_info: Dict[str, Any]) -> bool:
+        """
+        채널 템플릿에 첨부 파일 정보 추가
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            file_info: 파일 정보 {"name", "path", "size"}
+
+        Returns:
+            성공 여부
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                logger.warning(f"⚠️ 채널을 찾을 수 없습니다: {ch_name}")
+                return False
+
+            channels[ch_name].setdefault("files", []).append(file_info)
+            self.save()
+            logger.info(f"✅ 첨부 파일 추가: {ch_name} - {file_info.get('name')}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ 첨부 파일 추가 오류: {e}")
+            return False
+
+    def remove_file_from_channel(
+        self, guild_id: str, ch_name: str, file_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        채널 템플릿에서 첨부 파일 제거
+
+        Args:
+            guild_id: 길드 ID
+            ch_name: 채널 이름
+            file_name: 제거할 파일 이름
+
+        Returns:
+            제거된 파일 정보(dict) 또는 None
+            (호출자가 반환값의 path로 실제 파일을 지울 수 있도록 함)
+        """
+        try:
+            channels = self.get_channels(guild_id)
+            if ch_name not in channels:
+                return None
+
+            files = channels[ch_name].get("files", [])
+            for i, f in enumerate(files):
+                if f.get("name") == file_name:
+                    removed = files.pop(i)
+                    self.save()
+                    logger.info(f"🗑️ 첨부 파일 제거: {ch_name} - {file_name}")
+                    return removed
+            return None
+        except Exception as e:
+            logger.error(f"❌ 첨부 파일 제거 오류: {e}")
+            return None
 
     def rename_channel(self, guild_id: str, old_name: str, new_name: str) -> bool:
         """

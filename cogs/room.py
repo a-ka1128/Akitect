@@ -105,21 +105,24 @@ class RoomCog(commands.Cog):
                 )
 
                 if new_channel:
-                    # 메시지 전송
+                    # 메시지/파일 전송
                     msg = ch_info.get("msg", "")
-                    if msg:
+                    files = ChannelManager.build_files(ch_info)
+                    if msg or files:
                         # 첫 번째 채널에서만 멤버 태그
                         member_mention = f"{target.mention}" if i == 0 else ""
 
                         message_content = f"{member_mention}".strip() if member_mention else None
 
-                        embed = discord.Embed(
-                            title=ch_name,
-                            description=msg,
-                            color=EMBED_SUCCESS_COLOR
-                        )
-                        embed.set_thumbnail(url=target.display_avatar.url)
-                        await new_channel.send(content=message_content, embed=embed)
+                        embed = None
+                        if msg:
+                            embed = discord.Embed(
+                                title=ch_name,
+                                description=msg,
+                                color=EMBED_SUCCESS_COLOR
+                            )
+                            embed.set_thumbnail(url=target.display_avatar.url)
+                        await new_channel.send(content=message_content, embed=embed, files=files)
 
                     # 권한 설정 (여러 역할 지원)
                     # 기존 role_id 호환성 유지
@@ -188,15 +191,7 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 확인 메시지
-        embed = discord.Embed(
-            title="⚠️ 확인",
-            description=f"'{category.name}' 카테고리를 삭제하겠습니다. "
-                       f"이 작업은 되돌릴 수 없습니다.",
-            color=discord.Color.orange()
-        )
-
-        # 실제 삭제
+        # 실제 삭제 (되돌릴 수 없는 작업)
         success = await category_manager.delete_category(category, delete_channels=True)
 
         if success:
@@ -218,6 +213,5 @@ class RoomCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Cog 로드"""
-    # main.py에서 만든 전역 SettingsManager 인스턴스 사용
-    import main
-    await bot.add_cog(RoomCog(bot, main.settings_manager))
+    # main.setup_hook에서 bot에 등록한 공유 SettingsManager 사용
+    await bot.add_cog(RoomCog(bot, bot.settings_manager))

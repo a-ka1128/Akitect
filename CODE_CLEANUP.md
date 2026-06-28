@@ -51,8 +51,8 @@ settings_manager = SettingsManager()  # 모든 cog에서 공유
 모든 cog이 동일한 패턴으로 설정:
 ```python
 async def setup(bot: commands.Bot):
-    import main
-    await bot.add_cog(MyCog(bot, main.settings_manager))
+    # main.setup_hook에서 bot에 등록한 공유 SettingsManager 사용
+    await bot.add_cog(MyCog(bot, bot.settings_manager))
 ```
 
 ### 채널 생성 시 멤버 멘션

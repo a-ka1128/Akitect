@@ -4,10 +4,15 @@
 채널 템플릿의 생성, 수정, 삭제, 순서 변경 등을 담당합니다.
 """
 import logging
+import os
+import uuid
+from pathlib import Path
+
 import discord
 from discord.ext import commands
 from discord import app_commands
 
+import config
 from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, EMBED_INFO_COLOR
 from utils import SettingsManager, Validators, admin_only
 
@@ -205,7 +210,13 @@ class TemplateCog(commands.Cog):
 
         guild_id = str(interaction.guild_id)
 
+        # 삭제 전, 첨부 파일 물리 삭제를 위해 정보 확보
+        info = self.settings.get_channel(guild_id, channel_name)
+        files_to_remove = info.get("files", []) if info else []
+
         if self.settings.delete_channel(guild_id, channel_name):
+            for f in files_to_remove:
+                self._delete_physical_file(f.get("path", ""))
             embed = discord.Embed(
                 title="🗑️ 삭제 완료",
                 description=f"`{channel_name}` 템플릿이 삭제되었습니다.",
@@ -273,8 +284,14 @@ class TemplateCog(commands.Cog):
                 if roles:
                     role_str = f" [🔒 {', '.join(roles)}]"
 
+            file_str = ""
+            files = info.get("files", [])
+            if files:
+                file_str = "   📎 " + ", ".join(f["name"] for f in files) + "\n"
+
             desc += f"**{i}. {name}**{role_str}\n"
             desc += f"   ```{msg_preview}```\n"
+            desc += file_str
 
         embed = discord.Embed(
             title="📋 채널 템플릿 목록",
@@ -337,8 +354,7 @@ class TemplateCog(commands.Cog):
 
         # 새로운 채널 딕셔너리 생성 (순서 유지)
         new_channels = {k: channels[k] for k in keys}
-        self.settings.data[guild_id]["channels"] = new_channels
-        self.settings.save()
+        self.settings.set_channels(guild_id, new_channels)
 
         # 결과 출력
         desc = ""
@@ -435,9 +451,150 @@ class TemplateCog(commands.Cog):
             )
             await interaction.followup.send(embed=embed)
 
+    # ================================================================
+    # 첨부 파일 관련 명령어
+    # ================================================================
+
+    async def file_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """선택한 채널 템플릿의 첨부 파일 이름 자동완성"""
+        guild_id = str(interaction.guild_id)
+        channel_name = getattr(interaction.namespace, "channel_name", None)
+        if not channel_name:
+            return []
+        info = self.settings.get_channel(guild_id, channel_name) or {}
+        files = info.get("files", [])
+        return [
+            app_commands.Choice(name=f["name"], value=f["name"])
+            for f in files
+            if current.lower() in f["name"].lower()
+        ][:25]
+
+    @staticmethod
+    def _delete_physical_file(rel_path: str):
+        """저장된 첨부 파일을 디스크에서 삭제"""
+        if not rel_path:
+            return
+        try:
+            path = Path(rel_path)
+            if not path.is_absolute():
+                path = config.BASE_DIR / path
+            if path.exists():
+                os.remove(path)
+                logger.info(f"🗑️ 첨부 파일 삭제: {rel_path}")
+        except OSError as e:
+            logger.error(f"❌ 첨부 파일 삭제 오류: {e}")
+
+    @app_commands.command(
+        name="템플릿파일추가",
+        description="채널 템플릿에 함께 전송할 파일을 첨부합니다"
+    )
+    @app_commands.describe(
+        channel_name="대상 채널 템플릿 이름",
+        file="첨부할 파일"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete)
+    @admin_only()
+    async def add_template_file(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        file: discord.Attachment
+    ):
+        """템플릿 채널에 첨부 파일 추가"""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+        info = self.settings.get_channel(guild_id, channel_name)
+
+        if not info:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}` 템플릿을 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        # 파일 저장: 디스크에는 UUID 이름으로 저장해 한글/이모지 파일명 충돌을 방지하고,
+        # 원본 파일명은 settings.json에 기록해 전송 시 그대로 사용한다.
+        try:
+            guild_dir = config.TEMPLATE_FILES_DIR / guild_id
+            guild_dir.mkdir(parents=True, exist_ok=True)
+
+            suffix = Path(file.filename).suffix
+            stored = guild_dir / f"{uuid.uuid4().hex}{suffix}"
+            await file.save(stored)
+
+            file_info = {
+                "name": file.filename,
+                "path": stored.relative_to(config.BASE_DIR).as_posix(),
+                "size": file.size,
+            }
+            self.settings.add_file_to_channel(guild_id, channel_name, file_info)
+
+        except Exception as e:
+            logger.error(f"❌ 파일 저장 오류: {e}", exc_info=True)
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"파일 저장 중 오류가 발생했습니다: {str(e)}",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        size_kb = file.size / 1024
+        embed = discord.Embed(
+            title="✅ 파일 첨부 완료",
+            description=f"📝 채널: `{channel_name}`\n📎 파일: `{file.filename}` ({size_kb:.1f} KB)",
+            color=EMBED_SUCCESS_COLOR
+        )
+        embed.set_footer(text="이후 생성되는 방의 해당 채널에 함께 전송됩니다.")
+        await interaction.followup.send(embed=embed)
+        logger.info(f"템플릿 파일 추가: {guild_id} - {channel_name} - {file.filename}")
+
+    @app_commands.command(
+        name="템플릿파일삭제",
+        description="채널 템플릿에 첨부된 파일을 삭제합니다"
+    )
+    @app_commands.describe(
+        channel_name="대상 채널 템플릿 이름",
+        file_name="삭제할 파일 이름"
+    )
+    @app_commands.autocomplete(channel_name=channel_autocomplete, file_name=file_autocomplete)
+    @admin_only()
+    async def delete_template_file(
+        self,
+        interaction: discord.Interaction,
+        channel_name: str,
+        file_name: str
+    ):
+        """템플릿 채널의 첨부 파일 삭제"""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+        removed = self.settings.remove_file_from_channel(guild_id, channel_name, file_name)
+
+        if removed:
+            self._delete_physical_file(removed.get("path", ""))
+            embed = discord.Embed(
+                title="🗑️ 파일 삭제 완료",
+                description=f"📝 채널: `{channel_name}`\n📎 파일: `{file_name}`",
+                color=EMBED_SUCCESS_COLOR
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{channel_name}`에서 `{file_name}` 파일을 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+        await interaction.followup.send(embed=embed)
+
 
 async def setup(bot: commands.Bot):
     """Cog 로드"""
-    # main.py에서 만든 전역 SettingsManager 인스턴스 사용
-    import main
-    await bot.add_cog(TemplateCog(bot, main.settings_manager))
+    # main.setup_hook에서 bot에 등록한 공유 SettingsManager 사용
+    await bot.add_cog(TemplateCog(bot, bot.settings_manager))

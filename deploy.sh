@@ -109,8 +109,8 @@ ExecStart=$PROJECT_DIR/venv/bin/python main.py
 Restart=always
 RestartSec=10
 
-StandardOutput=append:$PROJECT_DIR/bot.log
-StandardError=append:$PROJECT_DIR/error.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

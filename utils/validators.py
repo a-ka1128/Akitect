@@ -15,7 +15,7 @@ class Validators:
         규칙:
         - 비어있지 않음
         - 2-100 글자
-        - 알파벳, 숫자, -, _ 만 사용
+        - 공백 불가 (Discord가 채널명의 공백을 자동 변환하므로 미리 막는다)
 
         Args:
             name: 검증할 채널 이름
@@ -23,7 +23,7 @@ class Validators:
         Returns:
             (성공 여부, 에러 메시지)
         """
-        if not name:
+        if not name or not name.strip():
             return False, "채널 이름은 비울 수 없습니다."
 
         if len(name) < 2:
@@ -32,8 +32,7 @@ class Validators:
         if len(name) > 100:
             return False, "채널 이름은 100자 이하여야 합니다."
 
-        # 알파벳, 숫자, -, _ 만 허용
-        if not name or ' ' in name:
+        if ' ' in name:
             return False, "채널 이름에는 공백을 사용할 수 없습니다."
 
         return True, ""

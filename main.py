@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 
 import config
-from utils import SettingsManager, CategoryManager, ChannelManager, admin_only
+from utils import SettingsManager, CategoryManager, ChannelManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # 봇 초기화
 # =========================================================
 intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
+intents.members = True  # 멤버 입장 감지에 필요 (privileged intent)
+# message_content 인텐트는 제거: 슬래시 명령어만 사용하므로 불필요 (privileged 신청 부담 ↓)
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -39,12 +39,8 @@ async def on_ready():
     logger.info(f"✅ 로그인 성공: {bot.user}")
     logger.info(f"📌 설정 파일: {config.SETTINGS_FILE}")
     logger.info("=" * 60)
-
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"✅ 슬래시 명령어 동기화: {len(synced)}개")
-    except Exception as e:
-        logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
+    # 슬래시 명령어 sync는 setup_hook에서 1회만 수행한다.
+    # on_ready는 재접속(RESUME)마다 호출되므로 여기서 sync하면 매번 중복 sync된다.
 
 
 @bot.event
@@ -61,7 +57,6 @@ async def on_member_join(member: discord.Member):
     logger.info(f"👤 멤버 입장: {member.name} ({member.id})")
 
     try:
-        global settings_manager
         guild_id = str(member.guild.id)
 
         # 자동 역할 부여
@@ -103,7 +98,6 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
         (성공 여부, 메시지)
     """
     try:
-        global settings_manager
         guild_id = str(guild.id)
 
         # 템플릿 확인
@@ -154,20 +148,23 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
                     if new_channel:
                         logger.info(f"✅ 채널 생성: {ch_name}")
 
-                        # 메시지 전송
+                        # 메시지/파일 전송
                         msg = ch_info.get("msg", "")
-                        if msg:
+                        files = ChannelManager.build_files(ch_info)
+                        if msg or files:
                             # 첫 번째 채널에서만 멤버 태그
                             member_mention = f"{member.mention}" if i == 0 else ""
                             message_content = f"{member_mention}".strip() if member_mention else None
 
-                            embed = discord.Embed(
-                                title=ch_name,
-                                description=msg,
-                                color=0x2ecc71
-                            )
-                            embed.set_thumbnail(url=member.display_avatar.url)
-                            await new_channel.send(content=message_content, embed=embed)
+                            embed = None
+                            if msg:
+                                embed = discord.Embed(
+                                    title=ch_name,
+                                    description=msg,
+                                    color=0x2ecc71
+                                )
+                                embed.set_thumbnail(url=member.display_avatar.url)
+                            await new_channel.send(content=message_content, embed=embed, files=files)
 
                         # 권한 설정 (여러 역할 지원)
                         role_ids = ch_info.get("role_ids", [])
@@ -219,7 +216,6 @@ async def load_cogs():
 
     각 Cog 파일은 setup() 함수를 포함해야 합니다.
     """
-    global settings_manager
     cogs_dir = Path(__file__).parent / "cogs"
 
     if not cogs_dir.exists():
@@ -241,8 +237,19 @@ async def load_cogs():
 
 @bot.event
 async def setup_hook():
-    """봇 시작 전 초기화"""
+    """봇 시작 전 초기화 (로그인 직후 1회 호출)"""
+    # cog들이 공유할 SettingsManager를 봇 인스턴스에 등록한다.
+    # (cog가 main을 import하던 순환 참조 패턴 제거)
+    bot.settings_manager = settings_manager
+
     await load_cogs()
+
+    # 슬래시 명령어는 cog 로드 후 여기서 1회만 동기화한다.
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f"✅ 슬래시 명령어 동기화: {len(synced)}개")
+    except Exception as e:
+        logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
 
 
 # =========================================================

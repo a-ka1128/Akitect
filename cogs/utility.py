@@ -203,6 +203,5 @@ class UtilityCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Cog 로드"""
-    # main.py에서 만든 전역 SettingsManager 인스턴스 사용
-    import main
-    await bot.add_cog(UtilityCog(bot, main.settings_manager))
+    # main.setup_hook에서 bot에 등록한 공유 SettingsManager 사용
+    await bot.add_cog(UtilityCog(bot, bot.settings_manager))

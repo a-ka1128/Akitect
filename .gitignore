@@ -6,6 +6,9 @@
 # 설정 파일
 settings.json
 
+# 템플릿 첨부 파일 (런타임 데이터, 서버에만 보관)
+template_files/
+
 # 로그
 *.log
 bot.log

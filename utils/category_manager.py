@@ -32,7 +32,7 @@ class CategoryManager:
         """
         이름으로 카테고리 찾기
 
-        정확한 이름 일치 또는 부분 일치로 찾습니다.
+        정확한 이름 일치(대소문자 무시)로만 찾습니다.
 
         Args:
             name: 찾을 카테고리 이름
@@ -45,9 +45,11 @@ class CategoryManager:
         if category:
             return category
 
-        # 부분 일치 찾기
+        # 대소문자 무시 정확 일치
+        # (부분 일치는 'u3'가 'u32 (새계정)'에 잘못 매칭되는 오배정 위험이 있어 사용하지 않는다)
+        lowered = name.lower()
         for cat in self.guild.categories:
-            if cat.name and name in cat.name:
+            if cat.name and cat.name.lower() == lowered:
                 return cat
 
         return None

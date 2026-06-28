@@ -3,10 +3,11 @@ Discord 채널 관리 (생성, 수정, 삭제 등)
 """
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 import discord
-from config import CHANNEL_OPERATION_DELAY, RENAME_OPERATION_DELAY
+from config import CHANNEL_OPERATION_DELAY, RENAME_OPERATION_DELAY, BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,34 @@ class ChannelManager:
         """
         self.guild = guild
         logger.info(f"ChannelManager 초기화: {guild.name}")
+
+    @staticmethod
+    def build_files(ch_info: Dict[str, Any]) -> list[discord.File]:
+        """
+        템플릿 정보(ch_info)에 저장된 첨부 파일들을 discord.File 리스트로 만든다.
+
+        discord.File은 전송 시 1회용으로 소비되므로 전송할 때마다 새로 호출해야 한다.
+
+        Args:
+            ch_info: 채널 템플릿 딕셔너리 (files 키 포함 가능)
+
+        Returns:
+            discord.File 리스트 (없으면 빈 리스트)
+        """
+        files: list[discord.File] = []
+        for f in ch_info.get("files", []):
+            try:
+                rel_path = f.get("path", "")
+                path = Path(rel_path)
+                if not path.is_absolute():
+                    path = BASE_DIR / path
+                if path.exists():
+                    files.append(discord.File(path, filename=f.get("name", path.name)))
+                else:
+                    logger.warning(f"⚠️ 첨부 파일을 찾을 수 없습니다: {rel_path}")
+            except Exception as e:
+                logger.error(f"❌ 첨부 파일 로드 오류: {e}")
+        return files
 
     async def rename_bulk(self, old_name: str, new_name: str) -> int:
         """
