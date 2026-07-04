@@ -482,3 +482,24 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"❌ 지원 역할 설정 오류: {e}")
             return False
+
+    # ================================================================
+    # 보관(아카이브) 채널 설정
+    # ================================================================
+
+    def get_archive_channel(self, guild_id: str) -> Optional[int]:
+        """길드의 보관 채널 ID 조회 (없으면 None)"""
+        self._ensure_guild(guild_id)
+        return self.data[guild_id].get("archive_channel")
+
+    def set_archive_channel(self, guild_id: str, channel_id: int) -> bool:
+        """길드의 보관 채널 설정"""
+        try:
+            self._ensure_guild(guild_id)
+            self.data[guild_id]["archive_channel"] = channel_id
+            self.save()
+            logger.info(f"✅ 보관 채널 설정: {channel_id}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ 보관 채널 설정 오류: {e}")
+            return False

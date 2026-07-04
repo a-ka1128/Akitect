@@ -29,6 +29,7 @@ ALLOWED_USER_IDS = list(map(
 BASE_DIR = Path(__file__).parent
 SETTINGS_FILE = BASE_DIR / "settings.json"
 TEMPLATE_FILES_DIR = BASE_DIR / "template_files"  # 템플릿 첨부 파일 저장 디렉토리
+ARCHIVE_DIR = BASE_DIR / "archives"  # 방 보관본이 커서 채널에 못 올릴 때 저장하는 디렉토리
 
 # =========================================================
 # Rate Limiting (속도 제한)

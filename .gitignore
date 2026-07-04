@@ -9,6 +9,9 @@ settings.json
 # 템플릿 첨부 파일 (런타임 데이터, 서버에만 보관)
 template_files/
 
+# 방 보관본 아카이브 (런타임 데이터)
+archives/
+
 # 로그
 *.log
 bot.log

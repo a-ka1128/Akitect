@@ -93,6 +93,34 @@ class UtilityCog(commands.Cog):
         logger.info(f"지원 역할 설정: {interaction.guild.name} - {role.name}")
 
     @app_commands.command(
+        name="보관채널설정",
+        description="방 삭제·퇴장 시 대화 보관본을 올릴 채널을 설정합니다"
+    )
+    @app_commands.describe(channel="보관본을 올릴 채널")
+    @admin_only()
+    async def set_archive_channel(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel
+    ):
+        """보관 채널 설정"""
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = str(interaction.guild_id)
+        self.settings.set_archive_channel(guild_id, channel.id)
+
+        embed = discord.Embed(
+            title="✅ 설정 완료",
+            description=(
+                f"방 보관본을 {channel.mention} 에 올립니다.\n"
+                f"⚠️ 상담 내용이 담기니 이 채널은 **관리자만 보이도록** 설정하세요."
+            ),
+            color=EMBED_SUCCESS_COLOR
+        )
+        await interaction.followup.send(embed=embed)
+        logger.info(f"보관 채널 설정: {interaction.guild.name} - {channel.name}")
+
+    @app_commands.command(
         name="도움",
         description="관리자를 호출합니다"
     )

@@ -10,7 +10,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, CHANNEL_OPERATION_DELAY
-from utils import SettingsManager, ChannelManager, CategoryManager, admin_only
+from utils import SettingsManager, ChannelManager, CategoryManager, Archiver, admin_only
 
 logger = logging.getLogger(__name__)
 
@@ -183,13 +183,31 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
+        # 삭제 전 보관 (보관 채널 설정 시 채널에, 없으면 디스크에 저장)
+        guild_id = str(interaction.guild_id)
+        archive_channel = None
+        archive_channel_id = self.settings.get_archive_channel(guild_id)
+        if archive_channel_id:
+            archive_channel = interaction.guild.get_channel(archive_channel_id)
+
+        archived_note = ""
+        try:
+            stats = await Archiver.archive(category, archive_channel)
+            where = "보관 채널" if stats.get("saved") == "channel" else "서버 디스크"
+            archived_note = (
+                f"\n📦 보관 완료 ({where}): 메시지 {stats['messages']}개 · 첨부 {stats['attachments']}개"
+            )
+        except Exception as e:
+            logger.error(f"방 보관 실패: {e}", exc_info=True)
+            archived_note = "\n⚠️ 보관 중 오류가 발생했습니다 (삭제는 계속 진행)."
+
         # 실제 삭제 (되돌릴 수 없는 작업)
         success = await category_manager.delete_category(category, delete_channels=True)
 
         if success:
             embed = discord.Embed(
                 title="🗑️ 삭제 완료",
-                description=f"'{category.name}' 카테고리가 삭제되었습니다.",
+                description=f"'{category.name}' 카테고리가 삭제되었습니다.{archived_note}",
                 color=EMBED_SUCCESS_COLOR
             )
             logger.info(f"방 삭제: {category.name}")
@@ -200,6 +218,64 @@ class RoomCog(commands.Cog):
                 color=EMBED_ERROR_COLOR
             )
 
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="방보관",
+        description="방(카테고리) 대화를 삭제하지 않고 보관본으로 추출합니다"
+    )
+    @app_commands.describe(target_name="보관할 방 이름")
+    @admin_only()
+    async def archive_room(
+        self,
+        interaction: discord.Interaction,
+        target_name: str
+    ):
+        """방 보관 (삭제 없이 추출)"""
+        await interaction.response.defer(ephemeral=True)
+
+        category_manager = CategoryManager(interaction.guild)
+        category = category_manager.find_category_by_name(target_name)
+
+        if not category:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"'{target_name}' 카테고리를 찾을 수 없습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        guild_id = str(interaction.guild_id)
+        archive_channel = None
+        archive_channel_id = self.settings.get_archive_channel(guild_id)
+        if archive_channel_id:
+            archive_channel = interaction.guild.get_channel(archive_channel_id)
+
+        await interaction.followup.send(
+            f"📦 `{category.name}` 보관 중... (메시지가 많으면 시간이 걸릴 수 있어요)"
+        )
+
+        try:
+            stats = await Archiver.archive(category, archive_channel)
+            where = ("보관 채널" if stats.get("saved") == "channel"
+                     else f"서버 디스크 (`{stats.get('path', '')}`)")
+            embed = discord.Embed(
+                title="✅ 보관 완료",
+                description=(
+                    f"방: `{category.name}`\n"
+                    f"채널 {stats['channels']}개 · 메시지 {stats['messages']}개 · 첨부 {stats['attachments']}개\n"
+                    f"저장 위치: {where}"
+                ),
+                color=EMBED_SUCCESS_COLOR
+            )
+        except Exception as e:
+            logger.error(f"방 보관 오류: {e}", exc_info=True)
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"보관 중 오류가 발생했습니다: {str(e)}",
+                color=EMBED_ERROR_COLOR
+            )
         await interaction.followup.send(embed=embed)
 
 

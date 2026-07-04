@@ -54,6 +54,27 @@ class CategoryManager:
 
         return None
 
+    def find_member_room(self, member: discord.Member) -> Optional[discord.CategoryChannel]:
+        """
+        멤버 '본인'의 방(카테고리) 찾기
+
+        이름(정확 일치) + 본인 접근 권한을 둘 다 만족해야 한다.
+        퇴장 자동 삭제처럼 되돌릴 수 없는 작업에서 엉뚱한 방을 지우지 않도록
+        보수적으로 판별한다. (닉네임을 바꾼 경우엔 못 찾을 수 있음 → 이때는 자동 정리 생략)
+
+        Args:
+            member: 대상 멤버
+
+        Returns:
+            본인 방 카테고리, 또는 None
+        """
+        lowered = member.display_name.lower()
+        for category in self.guild.categories:
+            if category.name and category.name.lower() == lowered:
+                if category.overwrites_for(member).read_messages:
+                    return category
+        return None
+
     async def create_category(
         self,
         name: str,

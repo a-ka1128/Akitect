@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 
 import config
-from utils import SettingsManager, CategoryManager, ChannelManager
+from utils import SettingsManager, CategoryManager, ChannelManager, Archiver
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # 봇 초기화
 # =========================================================
 intents = discord.Intents.default()
-intents.members = True  # 멤버 입장 감지에 필요 (privileged intent)
-# message_content 인텐트는 제거: 슬래시 명령어만 사용하므로 불필요 (privileged 신청 부담 ↓)
+intents.members = True  # 멤버 입장/퇴장 감지에 필요 (privileged intent)
+intents.message_content = True  # 방 보관 시 과거 메시지 내용을 읽으려면 필요 (privileged intent)
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -77,6 +77,55 @@ async def on_member_join(member: discord.Member):
 
     except Exception as e:
         logger.error(f"❌ 멤버 입장 처리 오류: {e}", exc_info=True)
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """
+    멤버 퇴장 이벤트
+
+    본인 방을 보관(아카이브)한 뒤 삭제한다.
+    보관에 실패하면 내용 유실을 막기 위해 삭제하지 않는다.
+    """
+    if member.bot:
+        return
+
+    logger.info(f"👋 멤버 퇴장: {member.name} ({member.id})")
+
+    try:
+        guild = member.guild
+        guild_id = str(guild.id)
+
+        category_manager = CategoryManager(guild)
+        category = category_manager.find_member_room(member)
+
+        if not category:
+            logger.info(f"퇴장 멤버의 방을 찾지 못함 — 자동 정리 생략: {member.display_name}")
+            return
+
+        # 보관 채널 확인 (없으면 Archiver가 디스크에 저장)
+        archive_channel = None
+        archive_channel_id = settings_manager.get_archive_channel(guild_id)
+        if archive_channel_id:
+            archive_channel = guild.get_channel(archive_channel_id)
+
+        # 보관 (실패하면 삭제하지 않음 → 내용 보존)
+        try:
+            stats = await Archiver.archive(category, archive_channel)
+            logger.info(
+                f"✅ 방 보관 완료: {category.name} "
+                f"(메시지 {stats['messages']}개, 첨부 {stats['attachments']}개, 저장={stats.get('saved')})"
+            )
+        except Exception as e:
+            logger.error(f"❌ 방 보관 실패 — 삭제를 생략합니다: {e}", exc_info=True)
+            return
+
+        # 보관 성공 후 삭제
+        await category_manager.delete_category(category, delete_channels=True)
+        logger.info(f"🗑️ 방 자동 삭제 완료: {category.name}")
+
+    except Exception as e:
+        logger.error(f"❌ 멤버 퇴장 처리 오류: {e}", exc_info=True)
 
 
 # =========================================================

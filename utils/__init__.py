@@ -9,6 +9,7 @@ from .permissions import is_admin, admin_only
 from .validators import Validators
 from .channel_manager import ChannelManager
 from .category_manager import CategoryManager
+from .archiver import Archiver
 
 __all__ = [
     "SettingsManager",
@@ -17,4 +18,5 @@ __all__ = [
     "Validators",
     "ChannelManager",
     "CategoryManager",
+    "Archiver",
 ]
