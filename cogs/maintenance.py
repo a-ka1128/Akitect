@@ -56,6 +56,14 @@ class MaintenanceCog(commands.Cog):
                 if channel is None:
                     continue  # 삭제된 채널 등
 
+                # 음성 채널에 접속자가 있으면 이번 주기는 건너뛴다.
+                # last_cleared를 갱신하지 않으므로, 사람이 나가면 다음 점검(최대 30분 뒤)에 바로 청소됨.
+                if isinstance(channel, discord.VoiceChannel) and channel.members:
+                    logger.info(
+                        f"⏳ 청소 보류 — 음성 접속자 {len(channel.members)}명: {channel.name}"
+                    )
+                    continue
+
                 await self._purge(channel)
                 self.settings.set_auto_clear_time(gid, cid, now.isoformat())
 
@@ -117,6 +125,7 @@ class MaintenanceCog(commands.Cog):
                 f"주기: **{interval_days}일**마다\n"
                 f"첫 청소: 약 {interval_days}일 후\n\n"
                 f"📌 고정(핀)된 메시지는 지우지 않습니다.\n"
+                f"🔊 음성 채널에 **사람이 있으면 건너뛰고**, 비워진 뒤 자동으로 청소합니다.\n"
                 f"⚠️ 봇에게 해당 채널의 **메시지 관리** 권한이 필요합니다."
             ),
             color=EMBED_SUCCESS_COLOR
