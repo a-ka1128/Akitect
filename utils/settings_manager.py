@@ -503,3 +503,57 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"❌ 보관 채널 설정 오류: {e}")
             return False
+
+    # ================================================================
+    # 자동 청소(주기적 메시지 삭제) 설정
+    # ================================================================
+
+    def get_auto_clear(self, guild_id: str) -> Dict[str, Dict]:
+        """길드의 자동 청소 설정 조회 {channel_id_str: {interval_hours, last_cleared}}"""
+        self._ensure_guild(guild_id)
+        return self.data[guild_id].get("auto_clear", {})
+
+    def set_auto_clear(
+        self, guild_id: str, channel_id: int, interval_hours: float, last_cleared: str
+    ) -> bool:
+        """채널 자동 청소 등록/갱신"""
+        try:
+            self._ensure_guild(guild_id)
+            ac = self.data[guild_id].setdefault("auto_clear", {})
+            ac[str(channel_id)] = {
+                "interval_hours": interval_hours,
+                "last_cleared": last_cleared,
+            }
+            self.save()
+            logger.info(f"✅ 자동 청소 설정: {channel_id} ({interval_hours}h)")
+            return True
+        except Exception as e:
+            logger.error(f"❌ 자동 청소 설정 오류: {e}")
+            return False
+
+    def remove_auto_clear(self, guild_id: str, channel_id: int) -> bool:
+        """채널 자동 청소 해제"""
+        try:
+            ac = self.get_auto_clear(guild_id)
+            if str(channel_id) in ac:
+                del ac[str(channel_id)]
+                self.save()
+                logger.info(f"🗑️ 자동 청소 해제: {channel_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ 자동 청소 해제 오류: {e}")
+            return False
+
+    def set_auto_clear_time(self, guild_id: str, channel_id: str, iso_time: str) -> bool:
+        """마지막 청소 시각 갱신"""
+        try:
+            ac = self.get_auto_clear(guild_id)
+            if channel_id in ac:
+                ac[channel_id]["last_cleared"] = iso_time
+                self.save()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ 자동 청소 시각 갱신 오류: {e}")
+            return False
