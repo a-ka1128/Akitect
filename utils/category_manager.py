@@ -152,6 +152,10 @@ class CategoryManager:
             except discord.HTTPException as e:
                 logger.error(f"❌ 방 정렬 API 오류: {e.status} {e.text}")
                 return -1
+            except Exception as e:
+                # 정렬 실패가 방 생성 결과를 '오류'로 뒤집지 않도록 여기서 흡수한다
+                logger.error(f"❌ 방 정렬 오류: {e}", exc_info=True)
+                return -1
 
     async def create_category(
         self,
