@@ -239,6 +239,10 @@ async def create_user_room(guild: discord.Guild, member: discord.Member) -> tupl
             return False, f"채널 생성 중 오류: {str(e)}"
 
         logger.info(f"✅ 방 생성 완료: {new_category.name}")
+
+        # 새 방을 이름순 자리로 (실패해도 방 생성은 성공으로 처리)
+        await category_manager.sort_rooms()
+
         return True, f"새로운 카테고리 '{new_category.name}'가 생성되었습니다."
 
     except Exception as e:

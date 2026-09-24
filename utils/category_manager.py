@@ -10,6 +10,26 @@ from config import CHANNEL_OPERATION_DELAY
 
 logger = logging.getLogger(__name__)
 
+# 길드별 정렬 잠금 — 여러 명이 동시에 입장해도 정렬이 겹쳐 실행되지 않게 한다
+_sort_locks: Dict[int, asyncio.Lock] = {}
+
+
+def room_sort_key(name: str) -> tuple[int, str]:
+    """
+    방 이름 정렬 키: 숫자 → 영문(abc, 대소문자 무시) → 한글(가나다) → 기타(이모지 등)
+    """
+    lowered = name.casefold()
+    first = lowered[:1]
+    if first and first in "0123456789":
+        group = 0
+    elif "a" <= first <= "z":
+        group = 1
+    elif "가" <= first <= "힣" or "ㄱ" <= first <= "ㆎ":
+        group = 2
+    else:
+        group = 3
+    return group, lowered
+
 
 class CategoryManager:
     """
@@ -74,6 +94,64 @@ class CategoryManager:
                 if category.overwrites_for(member).read_messages:
                     return category
         return None
+
+    def is_member_room(self, category: discord.CategoryChannel) -> bool:
+        """
+        멤버 방인지 판별
+
+        봇이 만든 방은 멤버 개인에게 보기 권한을 준다. 역할로만 권한을 거는
+        공지/관리용 고정 카테고리와 이 점으로 구분한다.
+        (퇴장해서 캐시에 없는 멤버는 discord.Object 로 들어오므로 Role 이 아니면 멤버로 본다)
+        """
+        for target, overwrite in category.overwrites.items():
+            if isinstance(target, discord.Role) or target.id == self.guild.me.id:
+                continue
+            if overwrite.read_messages:
+                return True
+        return False
+
+    async def sort_rooms(self) -> int:
+        """
+        멤버 방(카테고리)을 이름순으로 정렬
+
+        고정 카테고리는 제자리에 두고, 멤버 방이 차지하던 자리 안에서만 순서를 바꾼다.
+        API 한 번(일괄 위치 변경)으로 처리하므로 방이 많아도 빠르다.
+
+        Returns:
+            자리가 바뀐 방 개수 (실패 시 -1)
+        """
+        lock = _sort_locks.setdefault(self.guild.id, asyncio.Lock())
+        async with lock:
+            current = self.guild.categories  # 화면 표시 순서 (위→아래)
+            room_ids = {c.id for c in current if self.is_member_room(c)}
+            if len(room_ids) < 2:
+                return 0
+
+            sorted_rooms = iter(sorted(
+                (c for c in current if c.id in room_ids),
+                key=lambda c: room_sort_key(c.name)
+            ))
+            new_order = [next(sorted_rooms) if c.id in room_ids else c for c in current]
+
+            moved = sum(1 for old, new in zip(current, new_order) if old.id != new.id)
+            if moved == 0:
+                return 0
+
+            payload = [{"id": c.id, "position": i} for i, c in enumerate(new_order)]
+            try:
+                # discord.py 2.3 에는 일괄 위치 변경 공개 API가 없어 내부 http 를 쓴다.
+                # (channel.edit(position=) 을 방마다 부르면 방 수만큼 API 호출 + 레이트리밋)
+                await self.guild._state.http.bulk_channel_update(
+                    self.guild.id, payload, reason="방 이름순 정렬"
+                )
+                logger.info(f"✅ 방 이름순 정렬: {moved}개 이동 (방 {len(room_ids)}개)")
+                return moved
+            except discord.Forbidden:
+                logger.error("❌ 권한 부족: 카테고리 순서를 변경할 수 없습니다 (채널 관리 권한 필요)")
+                return -1
+            except discord.HTTPException as e:
+                logger.error(f"❌ 방 정렬 API 오류: {e.status} {e.text}")
+                return -1
 
     async def create_category(
         self,

@@ -137,6 +137,9 @@ class RoomCog(commands.Cog):
             # 채널 순서 정렬
             await channel_manager.reorder_channels_in_category(new_category, template_keys)
 
+            # 새 방을 이름순 자리로
+            await category_manager.sort_rooms()
+
             embed = discord.Embed(
                 title="✅ 방 생성 완료",
                 description=f"새로운 카테고리 '{new_category.name}'가 생성되었습니다.",
@@ -218,6 +221,37 @@ class RoomCog(commands.Cog):
                 color=EMBED_ERROR_COLOR
             )
 
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="방정렬",
+        description="멤버 방(카테고리)을 이름순(숫자→abc→가나다)으로 정렬합니다"
+    )
+    @admin_only()
+    async def sort_rooms(self, interaction: discord.Interaction):
+        """방 이름순 정렬 (고정 카테고리는 제자리 유지)"""
+        await interaction.response.defer(ephemeral=True)
+
+        moved = await CategoryManager(interaction.guild).sort_rooms()
+
+        if moved < 0:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description="정렬에 실패했습니다. 봇에 채널 관리 권한이 있는지 확인하세요.",
+                color=EMBED_ERROR_COLOR
+            )
+        elif moved == 0:
+            embed = discord.Embed(
+                title="✅ 정렬 완료",
+                description="이미 이름순으로 정렬되어 있습니다.",
+                color=EMBED_SUCCESS_COLOR
+            )
+        else:
+            embed = discord.Embed(
+                title="✅ 정렬 완료",
+                description=f"방 {moved}개의 위치를 이름순으로 바꿨습니다.",
+                color=EMBED_SUCCESS_COLOR
+            )
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(
