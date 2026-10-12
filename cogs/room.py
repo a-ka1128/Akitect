@@ -38,24 +38,21 @@ class RoomCog(commands.Cog):
         ][:25]
 
     @app_commands.command(name="방생성", description="특정 사용자를 위한 새로운 방을 생성합니다")
-    @app_commands.describe(
-        target="방을 생성할 사용자",
-        join_existing="같은 이름의 기존 방에 합류시킬지 (부계정 등). 기본: 새 방 생성"
-    )
+    @app_commands.describe(target="방을 생성할 사용자")
     @admin_only()
     async def manual_create_room(
         self,
         interaction: discord.Interaction,
-        target: discord.Member,
-        join_existing: bool = False
+        target: discord.Member
     ):
         """
         수동으로 사용자 방 생성
 
+        같은 이름의 멤버 방이 있으면 그 방에 합류시킨다 (부계정 등).
+
         Args:
             interaction: Discord Interaction
             target: 방을 생성할 멤버
-            join_existing: True면 같은 이름의 멤버 방에 합류 (동명이인 방에 잘못 들어가지 않도록 기본 False)
         """
         await interaction.response.defer(ephemeral=True)
 
@@ -87,10 +84,11 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 같은 이름의 '멤버 방'에 합류 (부계정 등 — 관리자가 명시적으로 요청했을 때만)
+        # 같은 이름의 '멤버 방'이 있으면 합류 (부계정 등 — 관리자가 직접 실행할 때만)
+        # 입장 시 자동 생성에서는 합류시키지 않는다 (같은 이름으로 들어와 남의 방을 보는 것 방지)
         # 공지 같은 고정 카테고리는 이름이 같아도 합류시키지 않는다.
         category = category_manager.find_category_by_name(target.display_name)
-        if join_existing and category and category_manager.is_member_room(category):
+        if category and category_manager.is_member_room(category):
             success = await category_manager.add_member_to_category(category, target)
             if success:
                 embed = discord.Embed(
