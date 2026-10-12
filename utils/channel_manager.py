@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any
 import discord
 from discord.utils import MISSING
 from config import CHANNEL_OPERATION_DELAY, RENAME_OPERATION_DELAY, BASE_DIR
+from .validators import Validators
+from .category_manager import is_member_room
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,43 @@ class ChannelManager:
             guild: 작업할 Discord Guild
         """
         self.guild = guild
-        logger.info(f"ChannelManager 초기화: {guild.name}")
+        logger.debug(f"ChannelManager 초기화: {guild.name}")
+
+    @staticmethod
+    def find_text_channel(
+        category: discord.CategoryChannel,
+        name: str
+    ) -> Optional[discord.TextChannel]:
+        """
+        카테고리 안에서 템플릿 이름에 해당하는 텍스트 채널 찾기
+
+        디스코드는 채널 이름을 소문자로 바꾸므로('FAQ' → 'faq') 정규화한 값끼리 비교한다.
+        """
+        target = Validators.normalize_channel_name(name)
+        for channel in category.text_channels:
+            if channel.name == target:
+                return channel
+        return None
+
+    @staticmethod
+    def template_role_ids(ch_info: Dict[str, Any]) -> list[int]:
+        """템플릿의 열람 역할 ID 목록 (예전 단일 role_id 형식도 지원)"""
+        role_ids = ch_info.get("role_ids", [])
+        if not role_ids and "role_id" in ch_info:
+            role_ids = [ch_info["role_id"]]
+        return role_ids
+
+    async def apply_template_roles(self, channel: discord.TextChannel, ch_info: Dict[str, Any]) -> None:
+        """템플릿에 설정된 역할들에게 채널 열람·쓰기 권한 부여"""
+        for role_id in self.template_role_ids(ch_info):
+            role = self.guild.get_role(role_id)
+            if role:
+                await self.set_channel_permissions(
+                    channel,
+                    role,
+                    read_messages=True,
+                    send_messages=True
+                )
 
     @staticmethod
     def build_files(ch_info: Dict[str, Any], max_size: Optional[int] = None) -> list[discord.File]:
@@ -154,9 +192,9 @@ class ChannelManager:
 
     async def rename_bulk(self, old_name: str, new_name: str) -> int:
         """
-        서버 전체에서 특정 이름의 채널을 찾아 모두 이름 변경
+        모든 멤버 방에서 특정 이름의 채널을 찾아 모두 이름 변경
 
-        각 카테고리를 순회하며 old_name을 가진 채널을 찾아 new_name으로 변경합니다.
+        멤버 방 카테고리만 순회한다 (공지 등 고정 카테고리는 건드리지 않음).
 
         Args:
             old_name: 현재 채널 이름
@@ -169,14 +207,11 @@ class ChannelManager:
         logger.info(f"채널 일괄 이름 변경 시작: {old_name} → {new_name}")
 
         for category in self.guild.categories:
-            if not category:
+            if not is_member_room(category):
                 continue
 
             # 카테고리 내에서 old_name을 가진 채널 찾기
-            target_channel = discord.utils.get(
-                category.text_channels,
-                name=old_name
-            )
+            target_channel = self.find_text_channel(category, old_name)
 
             if not target_channel:
                 continue
@@ -221,7 +256,7 @@ class ChannelManager:
             생성된 채널, 또는 실패 시 None
         """
         # 이미 존재하는 채널 확인
-        existing = discord.utils.get(category.text_channels, name=ch_name)
+        existing = self.find_text_channel(category, ch_name)
         if existing:
             logger.warning(f"⚠️ 채널이 이미 존재합니다: {ch_name}")
             return None
@@ -333,10 +368,7 @@ class ChannelManager:
         """
         try:
             for correct_index, ch_name in enumerate(template_keys):
-                channel = discord.utils.get(
-                    category.text_channels,
-                    name=ch_name
-                )
+                channel = self.find_text_channel(category, ch_name)
                 if channel and channel.position != correct_index:
                     await channel.edit(position=correct_index)
                     logger.debug(f"채널 위치 조정: {ch_name} → {correct_index}")

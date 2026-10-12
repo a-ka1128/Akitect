@@ -16,3 +16,27 @@ py -m venv venv
 ```
 
 `.env` 에 봇 토큰, `settings.json` 에 정적 설정. VM 배포는 `deploy.sh`.
+
+### `.env`
+
+| 키 | 설명 |
+|---|---|
+| `DISCORD_TOKEN` | 봇 토큰 (필수) |
+| `ALLOWED_USER_IDS` | 봇 소유자 ID, 쉼표 구분 — `/재시작`·`/동기화` 가능 |
+| `ALLOWED_GUILD_IDS` | 봇이 동작할 서버 ID, 쉼표 구분 (비우면 제한 없음) |
+
+### VM 업데이트
+
+discord.py 를 2.7 로 올렸으므로 `git pull` 후 반드시 패키지를 다시 설치한다.
+
+```bash
+./venv/bin/pip install -r requirements.txt
+sudo systemctl restart discord-bot
+```
+
+## 테스트
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```

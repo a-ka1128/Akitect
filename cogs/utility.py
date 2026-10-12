@@ -10,8 +10,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, ALLOWED_USER_IDS
-from utils import SettingsManager, admin_only
+from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, HELP_COOLDOWN_SECONDS
+from utils import SettingsManager, admin_only, owner_only
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,19 @@ class UtilityCog(commands.Cog):
         """보관 채널 설정"""
         await interaction.response.defer(ephemeral=True)
 
+        # 보관본에는 상담 내용 전체가 담기므로 누구나 보는 채널은 거부한다
+        if channel.permissions_for(interaction.guild.default_role).view_channel:
+            embed = discord.Embed(
+                title="❌ 공개 채널입니다",
+                description=(
+                    f"{channel.mention} 은(는) @everyone 이 볼 수 있어 보관 채널로 쓸 수 없습니다.\n"
+                    f"관리자만 보이도록 권한을 바꾼 뒤 다시 설정하세요."
+                ),
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
         guild_id = str(interaction.guild_id)
         self.settings.set_archive_channel(guild_id, channel.id)
 
@@ -124,6 +137,8 @@ class UtilityCog(commands.Cog):
         name="도움",
         description="관리자를 호출합니다"
     )
+    # 지원 역할 핑 도배 방지 (서버·사용자별)
+    @app_commands.checks.cooldown(1, HELP_COOLDOWN_SECONDS, key=lambda i: (i.guild_id, i.user.id))
     async def help_cmd(self, interaction: discord.Interaction):
         """
         관리자 호출
@@ -161,14 +176,19 @@ class UtilityCog(commands.Cog):
             description=f"{role.mention}님, {interaction.user.mention}님이 도움을 요청했습니다!",
             color=discord.Color.yellow()
         )
-        await interaction.followup.send(embed=embed)
+        # 임베드 안의 멘션은 알림이 가지 않으므로 본문(content)에 넣고, 이 역할만 핑을 허용한다
+        await interaction.followup.send(
+            content=role.mention,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(roles=[role])
+        )
         logger.info(f"도움 요청: {interaction.guild.name} - {interaction.user.name}")
 
     @app_commands.command(
         name="동기화",
-        description="슬래시 명령어를 Discord와 동기화합니다"
+        description="슬래시 명령어를 Discord와 동기화합니다 (소유자만)"
     )
-    @admin_only()
+    @owner_only()
     async def sync(self, interaction: discord.Interaction):
         """
         슬래시 명령어 동기화
@@ -201,6 +221,7 @@ class UtilityCog(commands.Cog):
         name="재시작",
         description="봇을 재시작합니다 (소유자만)"
     )
+    @owner_only()
     async def restart_bot(self, interaction: discord.Interaction):
         """
         봇 재시작
@@ -208,16 +229,6 @@ class UtilityCog(commands.Cog):
         Args:
             interaction: Discord Interaction
         """
-        # 소유자 확인
-        if interaction.user.id not in ALLOWED_USER_IDS:
-            embed = discord.Embed(
-                title="❌ 권한 없음",
-                description="이 명령어는 봇 소유자만 사용할 수 있습니다.",
-                color=EMBED_ERROR_COLOR
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
         await interaction.response.send_message(
             "🔄 봇을 재시작하는 중입니다...",
             ephemeral=True

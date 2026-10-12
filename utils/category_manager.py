@@ -31,6 +31,47 @@ def room_sort_key(name: str) -> tuple[int, str]:
     return group, lowered
 
 
+def is_member_room(category: discord.CategoryChannel) -> bool:
+    """
+    멤버 방인지 판별
+
+    봇이 만든 방은 멤버 개인에게 보기 권한을 준다. 역할로만 권한을 거는
+    공지/관리용 고정 카테고리와 이 점으로 구분한다.
+    (퇴장해서 캐시에 없는 멤버는 discord.Object 로 들어오므로 Role 이 아니면 멤버로 본다)
+    """
+    me_id = category.guild.me.id
+    for target, overwrite in category.overwrites.items():
+        if isinstance(target, discord.Role) or target.id == me_id:
+            continue
+        if overwrite.read_messages:
+            return True
+    return False
+
+
+def room_name_for(display_name: str, username: str, taken: set[str]) -> str:
+    """
+    겹치지 않는 방 이름 고르기
+
+    같은 이름의 카테고리가 이미 있으면 '이름 (아이디)' → '이름 (2)' 순으로 붙인다.
+    (기존 방에 합류시키면 같은 이름으로 들어온 사람이 남의 방을 볼 수 있으므로 항상 새 방을 만든다)
+
+    Args:
+        display_name: 멤버 표시 이름
+        username: 멤버 고유 아이디 (member.name)
+        taken: 이미 쓰는 카테고리 이름들 (casefold 된 값)
+    """
+    candidates = [display_name]
+    if username.casefold() != display_name.casefold():
+        candidates.append(f"{display_name} ({username})")
+    for name in candidates:
+        if name.casefold() not in taken:
+            return name[:100]
+    n = 2
+    while f"{display_name} ({n})".casefold() in taken:
+        n += 1
+    return f"{display_name} ({n})"[:100]
+
+
 class CategoryManager:
     """
     Discord 카테고리를 관리하는 클래스
@@ -46,7 +87,7 @@ class CategoryManager:
             guild: 작업할 Discord Guild
         """
         self.guild = guild
-        logger.info(f"CategoryManager 초기화: {guild.name}")
+        logger.debug(f"CategoryManager 초기화: {guild.name}")
 
     def find_category_by_name(self, name: str) -> Optional[discord.CategoryChannel]:
         """
@@ -74,20 +115,31 @@ class CategoryManager:
 
         return None
 
-    def find_member_room(self, member: discord.Member) -> Optional[discord.CategoryChannel]:
+    def find_member_room(
+        self,
+        member: discord.Member,
+        room_id: Optional[int] = None
+    ) -> Optional[discord.CategoryChannel]:
         """
         멤버 '본인'의 방(카테고리) 찾기
 
-        이름(정확 일치) + 본인 접근 권한을 둘 다 만족해야 한다.
+        1) 소유자 기록(room_id)이 있으면 ID로 찾는다.
+        2) 기록이 없는 예전 방은 이름(정확 일치) + 본인 접근 권한을 둘 다 만족해야 한다.
         퇴장 자동 삭제처럼 되돌릴 수 없는 작업에서 엉뚱한 방을 지우지 않도록
         보수적으로 판별한다. (닉네임을 바꾼 경우엔 못 찾을 수 있음 → 이때는 자동 정리 생략)
 
         Args:
             member: 대상 멤버
+            room_id: settings 에 기록된 본인 방 카테고리 ID
 
         Returns:
             본인 방 카테고리, 또는 None
         """
+        if room_id:
+            category = self.guild.get_channel(room_id)
+            if isinstance(category, discord.CategoryChannel):
+                return category
+
         lowered = member.display_name.lower()
         for category in self.guild.categories:
             if category.name and category.name.lower() == lowered:
@@ -96,19 +148,37 @@ class CategoryManager:
         return None
 
     def is_member_room(self, category: discord.CategoryChannel) -> bool:
-        """
-        멤버 방인지 판별
+        """멤버 방인지 판별 (모듈 함수 is_member_room 참고)"""
+        return is_member_room(category)
 
-        봇이 만든 방은 멤버 개인에게 보기 권한을 준다. 역할로만 권한을 거는
-        공지/관리용 고정 카테고리와 이 점으로 구분한다.
-        (퇴장해서 캐시에 없는 멤버는 discord.Object 로 들어오므로 Role 이 아니면 멤버로 본다)
+    def member_rooms(self) -> list[discord.CategoryChannel]:
+        """서버의 멤버 방 카테고리 목록 (화면 순서)"""
+        return [c for c in self.guild.categories if is_member_room(c)]
+
+    def unique_room_name(self, member: discord.Member) -> str:
+        """다른 카테고리와 겹치지 않는 새 방 이름"""
+        taken = {c.name.casefold() for c in self.guild.categories}
+        return room_name_for(member.display_name, member.name, taken)
+
+    def other_room_members(
+        self,
+        category: discord.CategoryChannel,
+        member: discord.abc.Snowflake
+    ) -> list[discord.Member]:
         """
-        for target, overwrite in category.overwrites.items():
-            if isinstance(target, discord.Role) or target.id == self.guild.me.id:
-                continue
-            if overwrite.read_messages:
-                return True
-        return False
+        방을 함께 쓰는 '서버에 남아 있는' 다른 멤버들
+
+        관리자가 /방생성 으로 부계정 등을 기존 방에 넣은 경우,
+        한 명이 나갔다고 방 전체를 지우지 않기 위해 쓴다.
+        (서버를 떠난 멤버는 캐시에 없어 discord.Object 로 들어오므로 제외된다)
+        """
+        return [
+            target for target, overwrite in category.overwrites.items()
+            if isinstance(target, discord.Member)
+            and target.id not in (member.id, self.guild.me.id)
+            and not target.bot
+            and overwrite.read_messages
+        ]
 
     async def sort_rooms(self) -> int:
         """
@@ -174,12 +244,9 @@ class CategoryManager:
         Returns:
             생성된 카테고리, 또는 실패 시 None
         """
-        # 이미 존재하는 카테고리 확인
-        existing = discord.utils.get(self.guild.categories, name=name)
-        if existing:
-            logger.warning(f"⚠️ 카테고리가 이미 존재합니다: {name}")
-            return existing
-
+        # 같은 이름의 기존 카테고리를 돌려주지 않는다.
+        # (호출자가 그 방을 새 멤버 것으로 착각해 소유자 기록·삭제가 꼬일 수 있음)
+        # 이름 중복은 호출 전에 unique_room_name / find_category_by_name 으로 처리한다.
         try:
             # 기본 권한 설정
             if overwrites is None:

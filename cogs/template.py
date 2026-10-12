@@ -14,7 +14,7 @@ from discord import app_commands
 
 import config
 from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, EMBED_INFO_COLOR
-from utils import SettingsManager, Validators, admin_only
+from utils import SettingsManager, ChannelManager, Validators, admin_only
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +101,29 @@ class TemplateCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 템플릿 저장
+        # 같은 이름 템플릿이 있으면 거부 — 덮어쓰면 첨부 파일·버튼·역할 설정이 사라진다.
+        # 디스코드는 채널 이름을 소문자로 바꾸므로 'FAQ' 와 'faq' 도 같은 이름으로 본다.
         guild_id = str(interaction.guild_id)
+        normalized = Validators.normalize_channel_name(channel_name)
+        existing = next(
+            (name for name in self.settings.get_channels(guild_id)
+             if Validators.normalize_channel_name(name) == normalized),
+            None
+        )
+        if existing:
+            embed = discord.Embed(
+                title="❌ 오류",
+                description=f"`{existing}` 템플릿이 이미 있습니다. 내용 변경은 `/템플릿수정`을 사용하세요.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        # 템플릿 저장
         info = {"msg": message.replace("\\n", "\n")}
 
         if view_role:
-            info["role_id"] = view_role.id
+            info["role_ids"] = [view_role.id]
 
         self.settings.set_channel(guild_id, channel_name, info)
 
@@ -175,9 +192,11 @@ class TemplateCog(commands.Cog):
             info["msg"] = message.replace("\\n", "\n")
             result_msg += "\n📝 메시지 업데이트됨"
 
-        # 역할 업데이트
+        # 역할 업데이트 (기존 역할들을 이 역할 하나로 교체)
+        # role_ids 가 있으면 예전 role_id 는 무시되므로 role_ids 를 직접 바꾼다
         if view_role:
-            info["role_id"] = view_role.id
+            info["role_ids"] = [view_role.id]
+            info.pop("role_id", None)
             result_msg += f"\n🔒 권한: {view_role.mention}"
 
         self.settings.set_channel(guild_id, channel_name, info)
@@ -233,6 +252,7 @@ class TemplateCog(commands.Cog):
             await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="템플릿목록", description="현재 서버의 모든 채널 템플릿을 확인합니다")
+    @admin_only()
     async def list_templates(self, interaction: discord.Interaction):
         """
         템플릿 목록 표시
@@ -271,9 +291,7 @@ class TemplateCog(commands.Cog):
 
             role_str = ""
             # 여러 역할 지원
-            role_ids = info.get("role_ids", [])
-            if not role_ids and "role_id" in info:
-                role_ids = [info["role_id"]]
+            role_ids = ChannelManager.template_role_ids(info)
 
             if role_ids:
                 roles = []
@@ -535,6 +553,21 @@ class TemplateCog(commands.Cog):
                     f"이 서버의 업로드 한도는 **{limit / (1024 * 1024):.0f}MB**입니다.\n"
                     f"`{file.filename}` 은(는) **{file.size / (1024 * 1024):.1f}MB** 라 등록할 수 없습니다.\n\n"
                     f"더 작은 파일로 올리거나, 서버 부스트로 한도를 올려주세요."
+                ),
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        # 서버별 템플릿 첨부 총량 제한 (VM 디스크 보호)
+        used = self.settings.template_files_size(guild_id)
+        quota = config.TEMPLATE_FILES_MAX_TOTAL_BYTES
+        if used + file.size > quota:
+            embed = discord.Embed(
+                title="❌ 저장 공간 부족",
+                description=(
+                    f"이 서버의 템플릿 첨부 파일은 총 **{quota / (1024 * 1024):.0f}MB**까지 등록할 수 있습니다.\n"
+                    f"현재 {used / (1024 * 1024):.1f}MB 사용 중 — `/템플릿파일삭제`로 정리한 뒤 다시 시도하세요."
                 ),
                 color=EMBED_ERROR_COLOR
             )

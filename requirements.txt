@@ -1,4 +1,4 @@
-discord.py==2.3.0
+discord.py==2.7.1
 python-dotenv==1.0.0
-aiohttp>=3.9.0
-# PyNaCl 제거: 음성(voice) 기능이 없어 불필요한 의존성이었음
+# aiohttp는 discord.py가 맞는 버전으로 설치한다
+# discord.py 2.3.x는 Python 3.13에서 import 실패(audioop 제거) → 2.7로 올림

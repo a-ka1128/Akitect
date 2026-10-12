@@ -8,6 +8,16 @@ class Validators:
     """입력값 검증을 위한 유틸리티 클래스"""
 
     @staticmethod
+    def normalize_channel_name(name: str) -> str:
+        """
+        디스코드가 텍스트 채널 이름을 바꾸는 방식대로 정규화 (소문자, 공백→'-')
+
+        템플릿 이름 'FAQ' 로 만든 채널은 실제로 'faq' 가 되므로,
+        채널을 이름으로 찾을 때는 항상 이 값끼리 비교해야 한다.
+        """
+        return name.strip().lower().replace(" ", "-")
+
+    @staticmethod
     def validate_channel_name(name: str) -> Tuple[bool, str]:
         """
         Discord 채널 이름 검증
