@@ -74,6 +74,7 @@ if [ ! -f ".env" ]; then
         exit 1
     fi
 fi
+chmod 600 .env  # 봇 토큰 — 소유자만 읽기
 echo "✅ .env 파일 확인 완료"
 
 # 8. 봇 테스트 실행 (선택사항)
@@ -108,6 +109,10 @@ ExecStart=$PROJECT_DIR/venv/bin/python main.py
 
 Restart=always
 RestartSec=10
+
+# 최소 권한으로 실행
+NoNewPrivileges=true
+PrivateTmp=true
 
 StandardOutput=journal
 StandardError=journal

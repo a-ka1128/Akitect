@@ -10,8 +10,10 @@ from discord.utils import MISSING
 from discord.ext import commands
 from discord import app_commands
 
-from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, CHANNEL_OPERATION_DELAY
-from utils import SettingsManager, ChannelManager, Validators, admin_only
+from config import (
+    EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, CHANNEL_OPERATION_DELAY, MESSAGE_HISTORY_LIMIT
+)
+from utils import SettingsManager, ChannelManager, CategoryManager, Validators, admin_only
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class ChannelCog(commands.Cog):
 
     @app_commands.command(
         name="채널이름변경",
-        description="서버 전체의 특정 이름 채널을 한 번에 변경합니다"
+        description="모든 멤버 방의 특정 이름 채널을 한 번에 변경합니다"
     )
     @app_commands.describe(
         old_name="현재 채널 이름",
@@ -59,7 +61,7 @@ class ChannelCog(commands.Cog):
         new_name: str
     ):
         """
-        서버 전체 채널 이름 변경
+        모든 멤버 방의 채널 이름 변경 (고정 카테고리는 제외)
 
         Args:
             interaction: Discord Interaction
@@ -90,8 +92,8 @@ class ChannelCog(commands.Cog):
 
         # 2. 실제 채널 이름 변경
         await interaction.followup.send(
-            f"🚀 **서버 전체 스캔 시작!**\n"
-            f"모든 카테고리에서 `{old_name}` 채널을 찾아 `{new_name}`(으)로 변경합니다..."
+            f"🚀 **전체 방 스캔 시작!**\n"
+            f"모든 멤버 방에서 `{old_name}` 채널을 찾아 `{new_name}`(으)로 변경합니다..."
         )
 
         manager = ChannelManager(interaction.guild)
@@ -152,13 +154,10 @@ class ChannelCog(commands.Cog):
         manager = ChannelManager(interaction.guild)
         success_count = 0
 
-        # 모든 카테고리에 채널 추가
-        for category in interaction.guild.categories:
-            if not category:
-                continue
-
+        # 모든 멤버 방에 채널 추가 (공지 등 고정 카테고리는 제외)
+        for category in CategoryManager(interaction.guild).member_rooms():
             # 이미 존재 확인
-            if discord.utils.get(category.text_channels, name=channel_name):
+            if manager.find_text_channel(category, channel_name):
                 continue
 
             try:
@@ -178,20 +177,7 @@ class ChannelCog(commands.Cog):
                     )
 
                     # 권한 설정 (여러 역할 지원)
-                    # 기존 role_id 호환성 유지
-                    role_ids = channel_info.get("role_ids", [])
-                    if not role_ids and "role_id" in channel_info:
-                        role_ids = [channel_info["role_id"]]
-
-                    for role_id in role_ids:
-                        role = interaction.guild.get_role(role_id)
-                        if role:
-                            await manager.set_channel_permissions(
-                                new_channel,
-                                role,
-                                read_messages=True,
-                                send_messages=True
-                            )
+                    await manager.apply_template_roles(new_channel, channel_info)
 
                     success_count += 1
                     await asyncio.sleep(CHANNEL_OPERATION_DELAY)
@@ -255,8 +241,8 @@ class ChannelCog(commands.Cog):
 
         success_count = 0
 
-        for category in interaction.guild.categories:
-            channel = discord.utils.get(category.text_channels, name=channel_name)
+        for category in CategoryManager(interaction.guild).member_rooms():
+            channel = ChannelManager.find_text_channel(category, channel_name)
             if not channel:
                 continue
 
@@ -332,40 +318,45 @@ class ChannelCog(commands.Cog):
         success_count = 0
         create_count = 0
 
-        # 모든 카테고리를 순회
-        for category in interaction.guild.categories:
-            for channel in category.text_channels:
-                if channel.name != channel_name:
-                    continue
+        # 모든 멤버 방을 순회 (공지 등 고정 카테고리는 제외)
+        for category in CategoryManager(interaction.guild).member_rooms():
+            channel = ChannelManager.find_text_channel(category, channel_name)
+            if not channel:
+                continue
 
-                try:
-                    new_embed = discord.Embed(
-                        title=channel_name,
-                        description=new_msg,
-                        color=EMBED_SUCCESS_COLOR
-                    )
-                    new_embed.set_footer(text="내용이 수정되었습니다.")
+            try:
+                new_embed = discord.Embed(
+                    title=channel_name,
+                    description=new_msg,
+                    color=EMBED_SUCCESS_COLOR
+                )
+                new_embed.set_footer(text="내용이 수정되었습니다.")
 
-                    # 기존 메시지 찾기
-                    target_msg = None
-                    async for msg in channel.history(limit=10):
-                        if msg.author == interaction.client.user:
-                            target_msg = msg
-                            break
+                # 기존 안내문 찾기: 채널 맨 앞쪽의 '임베드가 있는' 봇 메시지
+                # (최신 봇 메시지를 고르면 안내문 뒤에 따로 보낸 첨부파일 메시지를 고치게 됨)
+                target_msg = None
+                async for msg in channel.history(limit=MESSAGE_HISTORY_LIMIT, oldest_first=True):
+                    if msg.author == interaction.client.user and msg.embeds:
+                        target_msg = msg
+                        break
 
-                    if target_msg:
-                        await target_msg.edit(embed=new_embed, view=view)
-                        success_count += 1
-                    else:
-                        await channel.send(embed=new_embed, view=view or MISSING)
-                        create_count += 1
+                if target_msg:
+                    # 방 생성 때 넣은 멤버 프로필 썸네일 유지
+                    old_thumb = target_msg.embeds[0].thumbnail.url
+                    if old_thumb:
+                        new_embed.set_thumbnail(url=old_thumb)
+                    await target_msg.edit(embed=new_embed, view=view)
+                    success_count += 1
+                else:
+                    await channel.send(embed=new_embed, view=view or MISSING)
+                    create_count += 1
 
-                    await asyncio.sleep(CHANNEL_OPERATION_DELAY)
+                await asyncio.sleep(CHANNEL_OPERATION_DELAY)
 
-                except discord.Forbidden:
-                    logger.error(f"권한 부족: {channel.name}")
-                except Exception as e:
-                    logger.error(f"공지 수정 오류 ({channel.name}): {e}")
+            except discord.Forbidden:
+                logger.error(f"권한 부족: {channel.name}")
+            except Exception as e:
+                logger.error(f"공지 수정 오류 ({channel.name}): {e}")
 
         embed = discord.Embed(
             title="✅ 완료!",

@@ -43,29 +43,38 @@ class MaintenanceCog(commands.Cog):
             gid = str(guild.id)
             entries = self.settings.get_auto_clear(gid)
             for cid, info in list(entries.items()):
-                interval = timedelta(hours=info.get("interval_hours", 48))
-                last = info.get("last_cleared")
-                if last:
-                    try:
-                        if now - datetime.fromisoformat(last) < interval:
-                            continue  # 아직 주기 안 됨
-                    except ValueError:
-                        pass  # 시각 파싱 실패 시 그냥 청소 진행
+                # 한 채널의 예외가 루프 전체를 멈추지 않도록 채널 단위로 감싼다
+                # (tasks.loop 는 처리되지 않은 예외가 나면 조용히 멈춘다)
+                try:
+                    await self._maybe_clear(guild, gid, cid, info, now)
+                except Exception as e:
+                    logger.error(f"❌ 자동 청소 점검 오류 ({gid}/{cid}): {e}", exc_info=True)
 
-                channel = guild.get_channel(int(cid))
-                if channel is None:
-                    continue  # 삭제된 채널 등
+    async def _maybe_clear(self, guild: discord.Guild, gid: str, cid: str, info: dict, now: datetime):
+        """주기가 지난 채널이면 비운다."""
+        interval = timedelta(hours=info.get("interval_hours", 48))
+        last = info.get("last_cleared")
+        if last:
+            try:
+                if now - datetime.fromisoformat(last) < interval:
+                    return  # 아직 주기 안 됨
+            except ValueError:
+                pass  # 시각 파싱 실패 시 그냥 청소 진행
 
-                # 음성 채널에 접속자가 있으면 이번 주기는 건너뛴다.
-                # last_cleared를 갱신하지 않으므로, 사람이 나가면 다음 점검(최대 30분 뒤)에 바로 청소됨.
-                if isinstance(channel, discord.VoiceChannel) and channel.members:
-                    logger.info(
-                        f"⏳ 청소 보류 — 음성 접속자 {len(channel.members)}명: {channel.name}"
-                    )
-                    continue
+        channel = guild.get_channel(int(cid))
+        if channel is None:
+            return  # 삭제된 채널 등
 
-                await self._purge(channel)
-                self.settings.set_auto_clear_time(gid, cid, now.isoformat())
+        # 음성 채널에 접속자가 있으면 이번 주기는 건너뛴다.
+        # last_cleared를 갱신하지 않으므로, 사람이 나가면 다음 점검(최대 30분 뒤)에 바로 청소됨.
+        if isinstance(channel, discord.VoiceChannel) and channel.members:
+            logger.info(
+                f"⏳ 청소 보류 — 음성 접속자 {len(channel.members)}명: {channel.name}"
+            )
+            return
+
+        await self._purge(channel)
+        self.settings.set_auto_clear_time(gid, cid, now.isoformat())
 
     @auto_clear_loop.before_loop
     async def before_auto_clear(self):

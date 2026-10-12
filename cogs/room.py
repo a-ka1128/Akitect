@@ -4,13 +4,12 @@
 방 생성, 삭제 등을 담당합니다.
 """
 import logging
-import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
 
-from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR, CHANNEL_OPERATION_DELAY
-from utils import SettingsManager, ChannelManager, CategoryManager, Archiver, admin_only
+from config import EMBED_SUCCESS_COLOR, EMBED_ERROR_COLOR
+from utils import SettingsManager, CategoryManager, Archiver, admin_only, is_admin, build_member_room
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,22 @@ class RoomCog(commands.Cog):
         self.bot = bot
         self.settings = settings
 
+    async def room_autocomplete(
+        self,
+        interaction: discord.Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+        """멤버 방 이름 자동완성 (공지 등 고정 카테고리는 제외)"""
+        # 자동완성에는 admin_only 검사가 적용되지 않으므로 직접 막는다
+        if not is_admin(interaction):
+            return []
+        rooms = CategoryManager(interaction.guild).member_rooms()
+        return [
+            app_commands.Choice(name=c.name, value=c.name)
+            for c in rooms
+            if current.lower() in c.name.lower()
+        ][:25]
+
     @app_commands.command(name="방생성", description="특정 사용자를 위한 새로운 방을 생성합니다")
     @app_commands.describe(target="방을 생성할 사용자")
     @admin_only()
@@ -32,6 +47,8 @@ class RoomCog(commands.Cog):
     ):
         """
         수동으로 사용자 방 생성
+
+        같은 이름의 멤버 방이 있으면 그 방에 합류시킨다 (부계정 등).
 
         Args:
             interaction: Discord Interaction
@@ -51,12 +68,27 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 기존 카테고리 찾기
         category_manager = CategoryManager(interaction.guild)
-        category = category_manager.find_category_by_name(target.display_name)
 
-        if category:
-            # 기존 카테고리에 멤버 추가
+        # 이미 본인 방이 있으면 새로 만들지 않는다
+        own_room = category_manager.find_member_room(
+            target, self.settings.get_room_of(guild_id, target.id)
+        )
+        if own_room:
+            await category_manager.add_member_to_category(own_room, target)
+            embed = discord.Embed(
+                title="ℹ️ 이미 방이 있습니다",
+                description=f"'{own_room.name}' 방에 접근 권한을 다시 확인했습니다.",
+                color=EMBED_SUCCESS_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        # 같은 이름의 '멤버 방'이 있으면 합류 (부계정 등 — 관리자가 직접 실행할 때만)
+        # 입장 시 자동 생성에서는 합류시키지 않는다 (같은 이름으로 들어와 남의 방을 보는 것 방지)
+        # 공지 같은 고정 카테고리는 이름이 같아도 합류시키지 않는다.
+        category = category_manager.find_category_by_name(target.display_name)
+        if category and category_manager.is_member_room(category):
             success = await category_manager.add_member_to_category(category, target)
             if success:
                 embed = discord.Embed(
@@ -73,92 +105,20 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # 새로운 카테고리 생성
-        try:
-            overwrites = {
-                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                target: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                interaction.guild.me: discord.PermissionOverwrite(
-                    read_messages=True,
-                    manage_channels=True
-                )
-            }
-
-            new_category = await category_manager.create_category(
-                target.display_name,
-                target,
-                overwrites
-            )
-
-            if not new_category:
-                raise Exception("카테고리 생성 실패")
-
-            # 템플릿에 따라 채널 생성
-            channel_manager = ChannelManager(interaction.guild)
-            template_keys = list(channels.keys())
-
-            for i, (ch_name, ch_info) in enumerate(channels.items()):
-                new_channel = await channel_manager.create_in_category(
-                    new_category,
-                    ch_name,
-                    position=i
-                )
-
-                if new_channel:
-                    # 안내문과 파일 전송 (파일이 커도 안내문은 항상 게시되도록 분리 전송)
-                    member_mention = f"{target.mention}" if i == 0 else ""  # 첫 채널만 멤버 태그
-                    await channel_manager.send_template_content(
-                        new_channel,
-                        ch_info,
-                        title=ch_name,
-                        content=member_mention or None,
-                        thumbnail_url=target.display_avatar.url,
-                        color=EMBED_SUCCESS_COLOR,
-                    )
-
-                    # 권한 설정 (여러 역할 지원)
-                    # 기존 role_id 호환성 유지
-                    role_ids = ch_info.get("role_ids", [])
-                    if not role_ids and "role_id" in ch_info:
-                        role_ids = [ch_info["role_id"]]
-
-                    for role_id in role_ids:
-                        role = interaction.guild.get_role(role_id)
-                        if role:
-                            await channel_manager.set_channel_permissions(
-                                new_channel,
-                                role,
-                                read_messages=True,
-                                send_messages=True
-                            )
-
-                    await asyncio.sleep(CHANNEL_OPERATION_DELAY)
-
-            # 채널 순서 정렬
-            await channel_manager.reorder_channels_in_category(new_category, template_keys)
-
-            # 새 방을 이름순 자리로
-            await category_manager.sort_rooms()
-
-            embed = discord.Embed(
-                title="✅ 방 생성 완료",
-                description=f"새로운 카테고리 '{new_category.name}'가 생성되었습니다.",
-                color=EMBED_SUCCESS_COLOR
-            )
-            await interaction.followup.send(embed=embed)
+        # 새 방 생성
+        success, message = await build_member_room(interaction.guild, target, self.settings)
+        embed = discord.Embed(
+            title="✅ 방 생성 완료" if success else "❌ 오류",
+            description=message,
+            color=EMBED_SUCCESS_COLOR if success else EMBED_ERROR_COLOR
+        )
+        await interaction.followup.send(embed=embed)
+        if success:
             logger.info(f"방 생성: {target.name} ({target.id})")
 
-        except Exception as e:
-            logger.error(f"방 생성 오류: {e}", exc_info=True)
-            embed = discord.Embed(
-                title="❌ 오류",
-                description=f"방 생성 중 오류가 발생했습니다: {str(e)}",
-                color=EMBED_ERROR_COLOR
-            )
-            await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="방삭제", description="특정 방(카테고리)을 삭제합니다")
+    @app_commands.command(name="방삭제", description="특정 방(카테고리)을 보관한 뒤 삭제합니다")
     @app_commands.describe(target_name="삭제할 방의 이름")
+    @app_commands.autocomplete(target_name=room_autocomplete)
     @admin_only()
     async def delete_room(
         self,
@@ -186,6 +146,19 @@ class RoomCog(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
+        # 공지·관리용 고정 카테고리는 이 명령어로 지우지 않는다 (오타 한 번에 날아가는 것 방지)
+        if not category_manager.is_member_room(category):
+            embed = discord.Embed(
+                title="❌ 멤버 방이 아닙니다",
+                description=(
+                    f"'{category.name}' 은(는) 멤버 방이 아니라서 삭제하지 않았습니다.\n"
+                    f"고정 카테고리는 디스코드에서 직접 삭제하세요."
+                ),
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
         # 삭제 전 보관 (보관 채널 설정 시 채널에, 없으면 디스크에 저장)
         guild_id = str(interaction.guild_id)
         archive_channel = None
@@ -193,7 +166,6 @@ class RoomCog(commands.Cog):
         if archive_channel_id:
             archive_channel = interaction.guild.get_channel(archive_channel_id)
 
-        archived_note = ""
         try:
             stats = await Archiver.archive(category, archive_channel)
             where = "보관 채널" if stats.get("saved") == "channel" else "서버 디스크"
@@ -201,8 +173,15 @@ class RoomCog(commands.Cog):
                 f"\n📦 보관 완료 ({where}): 메시지 {stats['messages']}개 · 첨부 {stats['attachments']}개"
             )
         except Exception as e:
-            logger.error(f"방 보관 실패: {e}", exc_info=True)
-            archived_note = "\n⚠️ 보관 중 오류가 발생했습니다 (삭제는 계속 진행)."
+            # 퇴장 자동 삭제와 같은 정책: 보관에 실패하면 내용 보존을 위해 삭제하지 않는다
+            logger.error(f"방 보관 실패 — 삭제 중단: {e}", exc_info=True)
+            embed = discord.Embed(
+                title="❌ 보관 실패 — 삭제하지 않았습니다",
+                description=f"'{category.name}' 보관 중 오류가 발생했습니다: {e}",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.followup.send(embed=embed)
+            return
 
         # 실제 삭제 (되돌릴 수 없는 작업)
         success = await category_manager.delete_category(category, delete_channels=True)
@@ -259,6 +238,7 @@ class RoomCog(commands.Cog):
         description="방(카테고리) 대화를 삭제하지 않고 보관본으로 추출합니다"
     )
     @app_commands.describe(target_name="보관할 방 이름")
+    @app_commands.autocomplete(target_name=room_autocomplete)
     @admin_only()
     async def archive_room(
         self,

@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -41,7 +42,15 @@ class SettingsManager:
                 logger.info(f"✅ 설정 파일 로드 완료: {self.path}")
                 return data
             except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON 파싱 오류: {e}")
+                # 깨진 파일을 그대로 두면 다음 저장 때 빈 설정으로 덮어써진다 → 백업해 둔다
+                backup = self.path.with_name(
+                    f"{self.path.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+                )
+                try:
+                    os.replace(self.path, backup)
+                    logger.error(f"❌ JSON 파싱 오류: {e} — 원본을 {backup.name} 로 백업했습니다")
+                except OSError:
+                    logger.error(f"❌ JSON 파싱 오류: {e} (백업 실패)")
                 return {}
             except Exception as e:
                 logger.error(f"❌ 파일 로드 오류: {e}")
@@ -557,3 +566,46 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"❌ 자동 청소 시각 갱신 오류: {e}")
             return False
+
+    # ================================================================
+    # 방 소유자 기록 (카테고리 ID → 멤버 ID)
+    # ================================================================
+    # 이름이 아니라 ID로 본인 방을 찾기 위한 기록이다.
+    # (이름으로 찾으면 같은 이름으로 들어온 사람이 남의 방을 차지할 수 있다)
+
+    def register_room(self, guild_id: str, category_id: int, owner_id: int) -> bool:
+        """봇이 만든 방의 소유자 기록"""
+        try:
+            self._ensure_guild(guild_id)
+            self.data[guild_id].setdefault("rooms", {})[str(category_id)] = owner_id
+            self.save()
+            return True
+        except Exception as e:
+            logger.error(f"❌ 방 소유자 기록 오류: {e}")
+            return False
+
+    def get_room_of(self, guild_id: str, owner_id: int) -> Optional[int]:
+        """멤버 소유 방의 카테고리 ID (없으면 None)"""
+        self._ensure_guild(guild_id)
+        for category_id, owner in self.data[guild_id].get("rooms", {}).items():
+            if owner == owner_id:
+                return int(category_id)
+        return None
+
+    def unregister_room(self, guild_id: str, category_id: int) -> bool:
+        """방 소유자 기록 삭제 (방이 삭제됐을 때)"""
+        self._ensure_guild(guild_id)
+        rooms = self.data[guild_id].get("rooms", {})
+        if str(category_id) in rooms:
+            del rooms[str(category_id)]
+            self.save()
+            return True
+        return False
+
+    def template_files_size(self, guild_id: str) -> int:
+        """길드 템플릿 첨부 파일 총 용량 (bytes)"""
+        return sum(
+            f.get("size", 0)
+            for info in self.get_channels(guild_id).values()
+            for f in info.get("files", [])
+        )

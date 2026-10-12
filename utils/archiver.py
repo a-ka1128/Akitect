@@ -4,12 +4,17 @@
 카테고리 안 모든 채널의 메시지를 HTML 트랜스크립트로 만들고,
 클라이언트가 올린 첨부파일 원본까지 받아 하나의 ZIP으로 묶는다.
 보관 채널이 있으면 거기에 올리고, 너무 크면 VM 디스크에 저장한다.
+
+ZIP은 메모리가 아니라 디스크 임시 파일에 바로 쓰고, 첨부는 개수·총량 상한을 둔다.
+(큰 파일을 잔뜩 올린 방을 보관하다 VM 메모리가 바닥나 봇이 죽는 것을 막기 위함)
 """
-import io
+import os
 import re
 import html
 import uuid
+import asyncio
 import logging
+import tempfile
 import zipfile
 from pathlib import Path
 from datetime import timezone, timedelta
@@ -41,31 +46,55 @@ class Archiver:
             archive_channel: 보관본을 올릴 채널 (None이면 디스크에만 저장)
 
         Returns:
-            통계 dict {messages, attachments, channels, saved, path?}
+            통계 dict {messages, attachments, skipped, channels, saved, path?}
         """
-        zip_bytes, stats = await Archiver._build_zip(category)
+        tmp_path, stats = await Archiver._build_zip(category)
+        try:
+            return await Archiver._deliver(category, archive_channel, tmp_path, stats)
+        finally:
+            # 채널 업로드에 성공했거나 오류가 난 경우 남은 임시 파일 정리
+            tmp_path.unlink(missing_ok=True)
+
+    # ------------------------------------------------------------------
+    # 내부 구현
+    # ------------------------------------------------------------------
+    @staticmethod
+    async def _deliver(
+        category: discord.CategoryChannel,
+        archive_channel: discord.abc.Messageable,
+        tmp_path: Path,
+        stats: dict,
+    ) -> dict:
+        """만든 ZIP을 보관 채널에 올리거나, 못 올리면 디스크에 옮긴다."""
         filename = Archiver._safe_filename(category.name)
 
         summary = (
             f"📦 **{category.name}** 상담 보관본\n"
             f"채널 {stats['channels']}개 · 메시지 {stats['messages']}개 · 첨부 {stats['attachments']}개"
         )
+        if stats["skipped"]:
+            summary += f"\n⚠️ 용량 제한으로 첨부 {stats['skipped']}개는 담지 못했습니다"
 
-        # 1) 보관 채널에 업로드 시도
+        # 1) 보관 채널에 업로드 시도 (서버 업로드 한도 이하일 때만)
         if archive_channel is not None:
-            try:
-                await archive_channel.send(
-                    content=summary,
-                    file=discord.File(io.BytesIO(zip_bytes), filename=filename),
-                )
-                stats["saved"] = "channel"
-                logger.info(f"✅ 보관본 채널 업로드 완료: {category.name}")
-                return stats
-            except discord.HTTPException as e:
-                logger.warning(f"⚠️ 보관본이 커서 채널 업로드 실패 → 디스크 저장: {e}")
+            size = tmp_path.stat().st_size
+            limit = getattr(getattr(archive_channel, "guild", None), "filesize_limit", None)
+            if limit is not None and size > limit:
+                logger.info(f"보관본이 업로드 한도 초과({size} > {limit} bytes) → 디스크 저장")
+            else:
+                try:
+                    await archive_channel.send(
+                        content=summary,
+                        file=discord.File(tmp_path, filename=filename),
+                    )
+                    stats["saved"] = "channel"
+                    logger.info(f"✅ 보관본 채널 업로드 완료: {category.name}")
+                    return stats
+                except discord.HTTPException as e:
+                    logger.warning(f"⚠️ 보관본 채널 업로드 실패 → 디스크 저장: {e}")
 
         # 2) 디스크에 저장 (채널 미설정 또는 용량 초과 폴백)
-        path = Archiver._save_to_disk(zip_bytes, filename)
+        path = Archiver._save_to_disk(tmp_path, filename)
         stats["saved"] = "disk"
         stats["path"] = str(path)
         logger.info(f"✅ 보관본 디스크 저장 완료: {path}")
@@ -80,17 +109,37 @@ class Archiver:
 
         return stats
 
-    # ------------------------------------------------------------------
-    # 내부 구현
-    # ------------------------------------------------------------------
     @staticmethod
-    async def _build_zip(category: discord.CategoryChannel) -> tuple[bytes, dict]:
-        """카테고리 대화를 HTML + 첨부파일 ZIP 바이트로 만든다."""
+    async def _build_zip(category: discord.CategoryChannel) -> tuple[Path, dict]:
+        """
+        카테고리 대화를 HTML + 첨부파일 ZIP 임시 파일로 만든다.
+
+        Returns:
+            (임시 ZIP 경로, 통계 dict) — 임시 파일 정리는 호출자 책임
+        """
+        tmp_dir = config.ARCHIVE_DIR / ".tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(suffix=".zip", dir=tmp_dir)
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+
+        try:
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as z:
+                stats = await Archiver._write_zip(category, z)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        return tmp_path, stats
+
+    @staticmethod
+    async def _write_zip(category: discord.CategoryChannel, z: zipfile.ZipFile) -> dict:
+        """메시지를 읽으며 첨부는 받는 즉시 ZIP에 쓰고, 마지막에 HTML을 쓴다."""
         parts = [Archiver._html_header(category.name)]
-        zip_files: list[tuple[str, bytes]] = []
         msg_count = 0
         att_count = 0
         att_index = 0
+        skipped = 0
+        total_bytes = 0
 
         for channel in category.text_channels:
             parts.append(f'<h2># {html.escape(channel.name)}</h2>')
@@ -112,13 +161,27 @@ class Archiver:
                         ed = html.escape(emb.description or "").replace("\n", "<br>")
                         block.append(f'<div class="embed"><b>{et}</b><br>{ed}</div>')
 
-                    # 첨부파일 원본 다운로드
+                    # 첨부파일 원본 다운로드 (1개·총량 상한을 넘으면 이름만 남김)
                     for att in m.attachments:
                         att_index += 1
+                        if (att.size > config.ARCHIVE_MAX_ATTACHMENT_BYTES
+                                or total_bytes + att.size > config.ARCHIVE_MAX_TOTAL_BYTES):
+                            skipped += 1
+                            block.append(
+                                f'<div class="att">📎 {html.escape(att.filename)} '
+                                f'({att.size / (1024 * 1024):.1f}MB — 용량 제한으로 미포함)</div>'
+                            )
+                            continue
+
                         arc = f"attachments/{att_index}_{Archiver._safe_part(att.filename)}"
                         try:
                             data = await att.read()
-                            zip_files.append((arc, data))
+                            # 첨부는 대부분 이미 압축된 형식이라 무압축으로 저장 (CPU 절약)
+                            await asyncio.to_thread(
+                                z.writestr, arc, data, compress_type=zipfile.ZIP_STORED
+                            )
+                            del data
+                            total_bytes += att.size
                             att_count += 1
                             if (att.content_type or "").startswith("image"):
                                 block.append(
@@ -142,20 +205,14 @@ class Archiver:
                 parts.append('<div class="content">(이 채널을 읽을 권한이 없습니다)</div>')
 
         parts.append("</body></html>")
-        html_doc = "\n".join(parts)
+        z.writestr("transcript.html", "\n".join(parts))
 
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("transcript.html", html_doc)
-            for arc, data in zip_files:
-                z.writestr(arc, data)
-
-        stats = {
+        return {
             "messages": msg_count,
             "attachments": att_count,
+            "skipped": skipped,
             "channels": len(category.text_channels),
         }
-        return buf.getvalue(), stats
 
     @staticmethod
     def _html_header(title: str) -> str:
@@ -195,8 +252,9 @@ class Archiver:
         return f"{safe}_{uuid.uuid4().hex[:8]}.zip"
 
     @staticmethod
-    def _save_to_disk(data: bytes, filename: str) -> Path:
+    def _save_to_disk(tmp_path: Path, filename: str) -> Path:
+        """임시 ZIP을 보관 디렉토리로 옮긴다 (같은 디스크라 복사 없이 이름만 바뀜)"""
         config.ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         path = config.ARCHIVE_DIR / filename
-        path.write_bytes(data)
+        os.replace(tmp_path, path)
         return path

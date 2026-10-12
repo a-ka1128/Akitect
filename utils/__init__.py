@@ -5,18 +5,22 @@
 """
 
 from .settings_manager import SettingsManager
-from .permissions import is_admin, admin_only
+from .permissions import is_admin, admin_only, is_owner, owner_only
 from .validators import Validators
 from .channel_manager import ChannelManager
 from .category_manager import CategoryManager
 from .archiver import Archiver
+from .room_builder import build_member_room
 
 __all__ = [
     "SettingsManager",
     "is_admin",
     "admin_only",
+    "is_owner",
+    "owner_only",
     "Validators",
     "ChannelManager",
     "CategoryManager",
     "Archiver",
+    "build_member_room",
 ]

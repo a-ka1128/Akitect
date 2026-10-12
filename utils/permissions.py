@@ -22,10 +22,16 @@ def is_admin(interaction: discord.Interaction) -> bool:
     Returns:
         관리자 여부
     """
-    return (
-        interaction.user.guild_permissions.administrator or
-        interaction.user.id in ALLOWED_USER_IDS
-    )
+    if interaction.user.id in ALLOWED_USER_IDS:
+        return True
+    # DM 등 서버 밖에서는 guild_permissions 가 없다
+    perms = getattr(interaction.user, "guild_permissions", None)
+    return interaction.guild is not None and perms is not None and perms.administrator
+
+
+def is_owner(interaction: discord.Interaction) -> bool:
+    """봇 소유자(ALLOWED_USER_IDS)인지 확인 — 모든 서버에 영향을 주는 명령어용"""
+    return interaction.user.id in ALLOWED_USER_IDS
 
 
 def admin_only():
@@ -53,6 +59,26 @@ def admin_only():
                 f"⚠️ 권한 없는 사용자 접근 시도: {interaction.user.name} "
                 f"({interaction.user.id}) - {interaction.command.name}"
             )
+            return False
+        return True
+
+    return app_commands.check(predicate)
+
+
+def owner_only():
+    """
+    데코레이터: 봇 소유자(ALLOWED_USER_IDS)만 사용 가능
+
+    재시작·전역 동기화처럼 다른 서버에도 영향을 주는 명령어에 쓴다.
+    """
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not is_owner(interaction):
+            embed = discord.Embed(
+                title="❌ 권한 없음",
+                description="이 명령어는 봇 소유자만 사용할 수 있습니다.",
+                color=EMBED_ERROR_COLOR
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return False
         return True
 
